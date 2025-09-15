@@ -1,16 +1,22 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { terrainVertexShader, terrainFragShader } from './shaders/terrain_shader.js';
+// imported GeoTIFF directly as a script in the HTML
 
-// loaded GeoTIFF directly as a script in the HTML
-
-
-// VISUAL PARAMETERS
+// ----- PARAMETERS -----
+// TERRAIN
 const TERRAIN_WIDTH = 2000;
-const TERRAIN_POINT_SIZE_RATIO = 1/2000;
-const TERRAIN_POINT_COLOR = 0x52bbcc;
+const TERRAIN_HEIGHT_EXAGGERATION = 1.0;
+const TERRAIN_POINT_SIZE_RATIO = 0.7/2000;
+const TERRAIN_POINT_COLOR = 0x52bbcc; // blue
+// HUD
+const HUD_DISTANCE = 100;
+const HUD_SIZE = 3;
 
-// Geo data functions ---------
+
+// ----- TERRAIN LOADING -----  
 async function loadGeoTIFF(file){
     // conv raw filedata into tiff format
     const response = await fetch(file);
@@ -65,7 +71,6 @@ async function genTerrainMesh(terrainData) {
 
     // uniform scale factor
     const horizontalScale = TERRAIN_WIDTH / realWidth;
-    const verticalExaggeration = 1.0; // adjust this for dramatic elevation 
     
     // offset vertex data by elevation
     const terrainVertices = terrainGeo.attributes.position.array;
@@ -80,7 +85,7 @@ async function genTerrainMesh(terrainData) {
         terrainVertices[vertexIndex+2] += (Math.random() - 0.5) * jitterAmount*2; // z jitter 
 
         // offset Y value by elevation data
-        terrainVertices[vertexIndex+1] = (terrainElevationData[i] || 0) * horizontalScale * verticalExaggeration;
+        terrainVertices[vertexIndex+1] = (terrainElevationData[i] || 0) * horizontalScale * TERRAIN_HEIGHT_EXAGGERATION;
     }
     terrainGeo.attributes.position.needsUpdate = true;
    
@@ -108,10 +113,21 @@ async function genTerrainMesh(terrainData) {
     return points;
 }
 
-// START ----------
+
+// ----- MAIN -----
+
+const locationInfo = {
+    locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
+    terrainPath: 'static/models/st_mary_valley_terrain.tif'
+}
+
+// const locationInfo = {
+//     locationName: 'Huntsville // Alabama, U.S.A // Rocket City',
+//     terrainPath: 'static/models/huntsville_al.tif'
+// }
 
 // load map data
-const terrainTiffData = await loadGeoTIFF('static/models/st_mary_valley_terrain.tif');
+const terrainTiffData = await loadGeoTIFF(locationInfo.terrainPath);
 const terrainMesh = await genTerrainMesh(terrainTiffData);
 
 // Create a scene and camera
@@ -162,6 +178,34 @@ camera.position.set(
 // Add terrain mesh
 scene.add(terrainMesh);
 
+// Add location title text
+let textMesh = null; // global ref for text mesh so it can be updated in animate()
+
+// load font and create initial mesh
+const loader = new FontLoader();
+loader.load( 'static/fonts/Alte_Haas_Grotesk_Bold.json', function (font) {
+    const textGeom = new TextGeometry(
+        locationInfo.locationName, {
+            font: font,
+            size: HUD_SIZE,
+            height: 0.01,
+            depth: 1,
+            curveSegments: 12,
+        }
+    );
+    const textMaterial = new THREE.MeshBasicMaterial( {
+        color: 0xffffff,
+        depthTest: false //prevent occlusion by terrain
+    });
+    textMesh = new THREE.Mesh(textGeom, textMaterial);
+    // initial text position that will be overridden in animate()
+    textMesh.position.set(0, 5, 0);
+    // textMesh.rotation.x = -Math.PI / 2;
+    scene.add(textMesh);
+    console.log('Text Mesh Created:', textMesh);
+});
+
+
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
@@ -169,7 +213,20 @@ function animate() {
     // Update time uniform for shader animation
     terrainMesh.material.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
 
-    controls.update(); // required for controls.enableDamping = true
+    // required for controls.enableDamping = true
+    controls.update(); 
+
+    // reposition HUD elements in front of camera
+    if (textMesh) {
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        textMesh.position.copy(camera.position).add(forward.multiplyScalar(HUD_DISTANCE)); // move HUD away from camera position
+        textMesh.lookAt(camera.position); // face the camera
+        const up = new THREE.Vector3(0, 1, 0); // prevent roll
+        textMesh.up.copy(up);
+        textMesh.updateMatrix(); // force a refresh
+    }
+
     renderer.render(scene, camera);
 }
 

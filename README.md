@@ -1,9 +1,5 @@
 # Jared Boggs Personal Site
 
-## References
-- https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/
-- ThreeJS Documentation
-
 ## To-Do
 1. Points of Interest
    - City/Building - Education
@@ -19,3 +15,8 @@
    - text effects
    - sound design?
    - smooth zooming
+
+## References & Thanks
+- https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/
+- Terrain data provided by OpenTopography - NASA SRTM(2013) dataset.
+- ThreeJS
