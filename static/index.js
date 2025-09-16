@@ -1,7 +1,12 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
-import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { terrainVertexShader, terrainFragShader } from './shaders/terrain_shader.js';
 // imported GeoTIFF directly as a script in the HTML
 
@@ -178,33 +183,96 @@ camera.position.set(
 // Add terrain mesh
 scene.add(terrainMesh);
 
-// Add location title text
-let textMesh = null; // global ref for text mesh so it can be updated in animate()
+// ----- Setup Render and Effect passes ------
+// render the scene
+const renderScenePass = new RenderPass( scene, camera );
 
-// load font and create initial mesh
-const loader = new FontLoader();
-loader.load( 'static/fonts/Alte_Haas_Grotesk_Bold.json', function (font) {
-    const textGeom = new TextGeometry(
-        locationInfo.locationName, {
-            font: font,
-            size: HUD_SIZE,
-            height: 0.01,
-            depth: 1,
-            curveSegments: 12,
+// DEBUG DEPTHBUFFER SHADER
+const depthShader = {
+    uniforms: {
+        tDiffuse: { value: null },
+        tDepth: { value: null }
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
-    );
-    const textMaterial = new THREE.MeshBasicMaterial( {
-        color: 0xffffff,
-        depthTest: false //prevent occlusion by terrain
-    });
-    textMesh = new THREE.Mesh(textGeom, textMaterial);
-    // initial text position that will be overridden in animate()
-    textMesh.position.set(0, 5, 0);
-    // textMesh.rotation.x = -Math.PI / 2;
-    scene.add(textMesh);
-    console.log('Text Mesh Created:', textMesh);
-});
+    `,
+    fragmentShader: `
+        uniform sampler2D tDepth;
+        varying vec2 vUv;
+        void main() {
+            float depth = texture2D(tDepth, vUv).r;
+            gl_FragColor = vec4(vec3(depth), 1.0);
+        }
+    `
+};
 
+const depthPass = new ShaderPass(depthShader);
+depthPass.material.depthTest = false;
+depthPass.material.depthWrite = false;
+depthPass.uniforms.tDepth.value = renderScenePass.depthTexture;
+
+
+// bloom
+const bloomDefaultParams = {
+    threshold: 0,
+    strength: 0.3,
+    radius: 0.35
+};
+const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85);
+bloomPass.threshold = bloomDefaultParams.threshold;
+bloomPass.strength = bloomDefaultParams.strength;
+bloomPass.radius = bloomDefaultParams.radius;
+
+// bokeh / depth-of-field
+const bokehDefaultParams = {
+    focus: 1150.0,
+    aperture: 5,
+    maxblur: 0.01
+};
+const bokehPass = new BokehPass( scene, camera, {
+    focus: bokehDefaultParams.focus,
+    aperture: bokehDefaultParams.aperture,
+    maxblur: bokehDefaultParams.maxblur
+});
+bokehPass.needsSwap = true;
+
+// output
+const outputPass = new OutputPass();
+
+// EffectComposer
+const composer = new EffectComposer( renderer );
+composer.addPass( renderScenePass );
+composer.addPass( bloomPass );
+// composer.addPass( depthPass ); // temp for debug
+// composer.addPass( bokehPass );
+composer.addPass( outputPass );
+
+// GUI for settings
+const gui = new GUI();
+const bloomFolder = gui.addFolder( 'bloom' );
+bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
+    bloomPass.threshold = Number( value );
+});
+bloomFolder.add( bloomDefaultParams, 'strength', 0.0, 3.0 ).onChange( function ( value ) {
+    bloomPass.strength = Number( value );
+});
+bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
+    bloomPass.radius = Number( value );
+});
+const bokehFolder = gui.addFolder( 'Depth of Field / Bokeh');
+bokehFolder.add( bokehDefaultParams, 'focus', 10.0, 3000.0, 10 ).onChange( function ( value ) {
+    bokehPass.focus = Number( value );
+});
+bokehFolder.add( bokehDefaultParams, 'aperture', 0, 10, 0.1).onChange( function ( value ) {
+    bokehPass.aperture = Number( value );
+});
+bokehFolder.add( bokehDefaultParams, 'maxblur', 0.0, 0.01, 0.001 ).onChange( function ( value ) {
+    bokehPass.maxblur = Number( value );
+});
 
 // Animation loop
 function animate() {
@@ -216,18 +284,8 @@ function animate() {
     // required for controls.enableDamping = true
     controls.update(); 
 
-    // reposition HUD elements in front of camera
-    if (textMesh) {
-        const forward = new THREE.Vector3();
-        camera.getWorldDirection(forward);
-        textMesh.position.copy(camera.position).add(forward.multiplyScalar(HUD_DISTANCE)); // move HUD away from camera position
-        textMesh.lookAt(camera.position); // face the camera
-        const up = new THREE.Vector3(0, 1, 0); // prevent roll
-        textMesh.up.copy(up);
-        textMesh.updateMatrix(); // force a refresh
-    }
-
-    renderer.render(scene, camera);
+    composer.render();
+    //renderer.render(scene, camera);
 }
 
 // Handle window resize

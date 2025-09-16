@@ -11,7 +11,11 @@
    - POI is on one half, window appears with text content
 3. Polish
    - Postprocessing effects
+     - Depth of Field 
+     - Bloom
+     - Ground Fog
    - animations
+   - background
    - text effects
    - sound design?
    - smooth zooming
