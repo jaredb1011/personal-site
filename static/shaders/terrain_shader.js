@@ -3,17 +3,17 @@
 export const terrainVertexShader = /* glsl */`
     uniform float pointSize;
     uniform float time;
+    uniform float pointBobAmount;
+    uniform float pointBobSpeed;
     varying vec3 vPosition;
 
     void main() {
         // Create subtle bobbing motion
         vec3 animatedPosition = position;
-        float bobAmount = 3.0;  // adjust this to control bob height
-        float bobSpeed = 0.3;    // adjust this to control bob speed
         
         // Use position to create varying phase
         float phase = position.x * 0.02 + position.z * 0.02;
-        animatedPosition.y += sin(time * bobSpeed + phase) * bobAmount;
+        animatedPosition.y += sin(time * pointBobSpeed + phase) * pointBobAmount;
 
         // world space to clip space
         gl_Position = projectionMatrix * modelViewMatrix * vec4(animatedPosition, 1.0);

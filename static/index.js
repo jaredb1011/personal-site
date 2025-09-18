@@ -3,25 +3,34 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+// import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+// import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { terrainVertexShader, terrainFragShader } from './shaders/terrain_shader.js';
 // imported GeoTIFF directly as a script in the HTML
 
-// ----- PARAMETERS -----
+
+
+// ---------- PARAMETERS ----------
 // TERRAIN
-const TERRAIN_WIDTH = 2000;
-const TERRAIN_HEIGHT_EXAGGERATION = 1.0;
-const TERRAIN_POINT_SIZE_RATIO = 0.7/2000;
-const TERRAIN_POINT_COLOR = 0x52bbcc; // blue
-// HUD
-const HUD_DISTANCE = 100;
-const HUD_SIZE = 3;
+const TERRAIN_VERTEX_DENSITY = 0.2;      // if subsampling (< 1.0) then elevation data must be at least TERRAIN_WIDTH wide
+const TERRAIN_HEIGHT_EXAGGERATION = 1.0; // make peaks taller
+const TERRAIN_POINT_SIZE_RATIO = 0.0006; // size of the rendered points relative to terrain
+const TERRAIN_POINT_COLOR = 0x52bbcc;    // blue
+const TERRAIN_WIDTH = 2000;              // world space size of terrain mesh
+
+// TODO: add default terrain params and hook up GUI to tweak on the fly
+
+// BLOOM
+const bloomDefaultParams = {
+    threshold: 0.05,
+    strength: 0.45,
+    radius: 0.25
+};
 
 
-// ----- TERRAIN LOADING -----  
+// ---------- TERRAIN LOADING ----------  
 async function loadGeoTIFF(file){
     // conv raw filedata into tiff format
     const response = await fetch(file);
@@ -41,12 +50,26 @@ async function loadGeoTIFF(file){
     let pixelSizeX = Math.abs(resolution[0]);
     let pixelSizeY = Math.abs(resolution[1]);
 
-    // Override with assumed 20m if projected but resolution tiny
-    if (geoKeys.GTModelTypeGeoKey === 2 && pixelSizeX < 0.001) {
-        pixelSizeX = 20;  // Assume 1-arc-second (~20m at this latitude)
-        pixelSizeY = 20;
-        console.log(`Overriding tiny resolution with assumed 20m x 20m`);
-    }
+   if (geoKeys.GTModelTypeGeoKey === 2) {
+        // Geographic coordinates (degrees): convert to meters
+        const latitude = origin[1]; // yOrigin in degrees
+        const metersPerDegLat = 111000; // Approx 111km per degree latitude
+        const metersPerDegLon = metersPerDegLat * Math.cos(latitude * Math.PI / 180); // Adjust for longitude
+        pixelSizeX = Math.abs(resolution[0]) * metersPerDegLon; // Width (lon) in meters
+        pixelSizeY = Math.abs(resolution[1]) * metersPerDegLat; // Height (lat) in meters
+        console.log(`Geographic CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m at lat=${latitude}`);
+    } else {
+        // Projected coordinates (assume meters)
+        pixelSizeX = Math.abs(resolution[0]);
+        pixelSizeY = Math.abs(resolution[1]);
+        console.log(`Projected CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m`);
+    } 
+    // // Override with assumed 10m if projected but resolution tiny
+    // if (geoKeys.GTModelTypeGeoKey === 2 && pixelSizeX < 0.001) {
+    //     pixelSizeX = 10;  // Assume 1-arc-second (~20m at this latitude)
+    //     pixelSizeY = 10;
+    //     console.log(`Overriding tiny resolution with assumed 10m x 10m`);
+    // }
 
     console.log(`Width: ${width}, Height: ${length}`);
     console.log(`Pixel Resolution: ${pixelSizeX}m x ${pixelSizeY}m`);
@@ -64,47 +87,70 @@ async function genTerrainMesh(terrainData) {
     const realLength = terrainLength * pixelSizeY;
     console.log(`Real Extents: ${realWidth}m wide x ${realLength}m long`);
     const aspectRatio = realLength / realWidth;
+    console.log(`Aspect Ratio (L/W): ${aspectRatio}`);
 
-    // create initial flat plane with correct # of vertices
+    // Uniform scale factor to fit real extents into world space
+    const worldSpaceToRealRatio = TERRAIN_WIDTH / realWidth;
+    console.log(`World Space to Real Word Unit ratio: ${worldSpaceToRealRatio}`);
+
+    //create initial flat plane with correct # of vertices
+    const widthVertices = Math.max(1, Math.floor(terrainWidth * TERRAIN_VERTEX_DENSITY));
+    const lengthVertices = Math.max(1, Math.floor(terrainLength * TERRAIN_VERTEX_DENSITY));
+    console.log(`Vertex Density: ${TERRAIN_VERTEX_DENSITY}, Width Verts: ${widthVertices}, Length Verts: ${lengthVertices}, Total Verts: ${widthVertices * lengthVertices}`);
+    
     const terrainGeo = new THREE.PlaneGeometry(
-        TERRAIN_WIDTH,  // scaled width
-        TERRAIN_WIDTH * aspectRatio,  // scaled length 
-        terrainWidth-1, // width segments
-        terrainLength-1 // length segments
+        TERRAIN_WIDTH,                // world space width
+        TERRAIN_WIDTH * aspectRatio,  // world space length
+        widthVertices-1,              // width segments
+        lengthVertices-1              // length segments
     );
     terrainGeo.rotateX(-Math.PI / 2);
-
-    // uniform scale factor
-    const horizontalScale = TERRAIN_WIDTH / realWidth;
-    
-    // offset vertex data by elevation
     const terrainVertices = terrainGeo.attributes.position.array;
-    const jitterAmount = 7 * horizontalScale;
-    for (let i = 0; i < terrainElevationData.length; i++) {
-        // geometry vertex data has x,y,z components so need to skip 3
-        // elements to get to the next vertex (i*3)
-        const vertexIndex = i*3;  
+    
+    // Jitter and elevation scaled to horizontal compression
+    const jitterAmount = 7 * worldSpaceToRealRatio;
+    
+    // offset vertex data by sampling (or sub-sampling) elevation data
+    let minY = Infinity, maxY = -Infinity;
+    for (let coarseRow = 0; coarseRow < lengthVertices; coarseRow++) {
+        for (let coarseCol = 0; coarseCol < widthVertices; coarseCol++) {
+            // Compute 1D vertex index (row-major order)
+            const vIdx = coarseRow * widthVertices + coarseCol;
+            const vertexIndex = vIdx * 3;  
 
-        // apply jitter to mitigate moire effect from perfect grid alignment
-        terrainVertices[vertexIndex]   += (Math.random() - 0.5) * jitterAmount*2; // x jitter
-        terrainVertices[vertexIndex+2] += (Math.random() - 0.5) * jitterAmount*2; // z jitter 
+            // Clamp vIdx to avoid out-of-bounds (safety for edge cases)
+            if (vIdx >= widthVertices * lengthVertices) break;
 
-        // offset Y value by elevation data
-        terrainVertices[vertexIndex+1] = (terrainElevationData[i] || 0) * horizontalScale * TERRAIN_HEIGHT_EXAGGERATION;
+            // apply jitter to mitigate moire effect from perfect grid alignment
+            terrainVertices[vertexIndex]   += (Math.random() - 0.5) * jitterAmount * 2; // x jitter
+            terrainVertices[vertexIndex+2] += (Math.random() - 0.5) * jitterAmount * 2; // z jitter 
+
+            // Compute corresponding fine indices and sample elevation
+            const fineCol = Math.min(terrainWidth - 1, Math.floor(coarseCol * terrainWidth / widthVertices));
+            const fineRow = Math.min(terrainLength - 1, Math.floor(coarseRow * terrainLength / lengthVertices));
+            const elevIdx = fineRow * terrainWidth + fineCol;
+            const elevation = terrainElevationData[elevIdx] || 0;
+            
+            // offset Y value by elevation data, scaled horizontally
+            const yPos = elevation * worldSpaceToRealRatio * TERRAIN_HEIGHT_EXAGGERATION;
+            terrainVertices[vertexIndex+1] = yPos;
+            
+            // Track min/max Y for debug
+            if (yPos < minY) minY = yPos;
+            if (yPos > maxY) maxY = yPos;
+        }
     }
     terrainGeo.attributes.position.needsUpdate = true;
-   
-    // compute normals 
-    // this will only be needed if using lighting/advanced texture later
-    //terrainGeo.computeVertexNormals();
 
     // terrain point shader
-    const shaderMaterial = new THREE.ShaderMaterial({
+    const terrainShaderMaterial = new THREE.ShaderMaterial({
         uniforms: {
             pointSize: { value: TERRAIN_POINT_SIZE_RATIO * TERRAIN_WIDTH},
+            time: { value: 0.0 },  // time uniform for animation, needs to be updated in main loop
+            pointBobAmount: { value: 3.0 },
+            pointBobSpeed: { value: 0.3 },
             pointColor: { value: new THREE.Color(TERRAIN_POINT_COLOR) },
-            pointBrightness: { value: 0.9 },
-            time: { value: 0.0 }  // time uniform for animation
+            pointBrightness: { value: 0.9 }
         },
         vertexShader: terrainVertexShader,
         fragmentShader: terrainFragShader,
@@ -114,26 +160,33 @@ async function genTerrainMesh(terrainData) {
     });
 
     // create points instead of mesh
-    const points = new THREE.Points(terrainGeo, shaderMaterial);
-    return points;
+    const points = new THREE.Points(terrainGeo, terrainShaderMaterial);
+    console.log('Terrain points mesh created.');
+    return { points, shaderMaterial: terrainShaderMaterial };
 }
 
 
-// ----- MAIN -----
+
+// ---------- BUILD SCENE ----------
 
 const locationInfo = {
     locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
-    terrainPath: 'static/models/st_mary_valley_terrain.tif'
+    terrainPath: 'static/geodata/st_mary_valley_10m.tif'
 }
 
 // const locationInfo = {
+//     locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
+//     terrainPath: 'static/geodata/st_mary_valley_terrain.tif'
+// }
+
+// const locationInfo = {
 //     locationName: 'Huntsville // Alabama, U.S.A // Rocket City',
-//     terrainPath: 'static/models/huntsville_al.tif'
+//     terrainPath: 'static/geodata/huntsville_al.tif'
 // }
 
 // load map data
 const terrainTiffData = await loadGeoTIFF(locationInfo.terrainPath);
-const terrainMesh = await genTerrainMesh(terrainTiffData);
+const { terrainMesh, terrainShader } = await genTerrainMesh(terrainTiffData);
 
 // Create a scene and camera
 const scene = new THREE.Scene();
@@ -148,8 +201,7 @@ const camera = new THREE.PerspectiveCamera(
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ 
     canvas,
-    antialias: true,
-    logarithmicDepthBuffer: true,  // helps with depth precision
+    // antialias: true,
     powerPreference: "high-performance"
 });
 renderer.setPixelRatio(window.devicePixelRatio);  // important for point rendering
@@ -183,76 +235,32 @@ camera.position.set(
 // Add terrain mesh
 scene.add(terrainMesh);
 
-// ----- Setup Render and Effect passes ------
-// render the scene
+// ---------- RENDER PIPELINE ----------
+
+// render
 const renderScenePass = new RenderPass( scene, camera );
 
-// DEBUG DEPTHBUFFER SHADER
-const depthShader = {
-    uniforms: {
-        tDiffuse: { value: null },
-        tDepth: { value: null }
-    },
-    vertexShader: `
-        varying vec2 vUv;
-        void main() {
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-    `,
-    fragmentShader: `
-        uniform sampler2D tDepth;
-        varying vec2 vUv;
-        void main() {
-            float depth = texture2D(tDepth, vUv).r;
-            gl_FragColor = vec4(vec3(depth), 1.0);
-        }
-    `
-};
-
-const depthPass = new ShaderPass(depthShader);
-depthPass.material.depthTest = false;
-depthPass.material.depthWrite = false;
-depthPass.uniforms.tDepth.value = renderScenePass.depthTexture;
-
-
 // bloom
-const bloomDefaultParams = {
-    threshold: 0,
-    strength: 0.3,
-    radius: 0.35
-};
+
 const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85);
 bloomPass.threshold = bloomDefaultParams.threshold;
 bloomPass.strength = bloomDefaultParams.strength;
 bloomPass.radius = bloomDefaultParams.radius;
 
-// bokeh / depth-of-field
-const bokehDefaultParams = {
-    focus: 1150.0,
-    aperture: 5,
-    maxblur: 0.01
-};
-const bokehPass = new BokehPass( scene, camera, {
-    focus: bokehDefaultParams.focus,
-    aperture: bokehDefaultParams.aperture,
-    maxblur: bokehDefaultParams.maxblur
-});
-bokehPass.needsSwap = true;
-
 // output
 const outputPass = new OutputPass();
 
-// EffectComposer
+
+// Render / Postprocessing pipeline
 const composer = new EffectComposer( renderer );
 composer.addPass( renderScenePass );
 composer.addPass( bloomPass );
-// composer.addPass( depthPass ); // temp for debug
-// composer.addPass( bokehPass );
 composer.addPass( outputPass );
 
 // GUI for settings
 const gui = new GUI();
+const terrainFolder = gui.addFolder( 'terrain' );
+terrainFolder.add( )
 const bloomFolder = gui.addFolder( 'bloom' );
 bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
     bloomPass.threshold = Number( value );
@@ -263,16 +271,10 @@ bloomFolder.add( bloomDefaultParams, 'strength', 0.0, 3.0 ).onChange( function (
 bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
     bloomPass.radius = Number( value );
 });
-const bokehFolder = gui.addFolder( 'Depth of Field / Bokeh');
-bokehFolder.add( bokehDefaultParams, 'focus', 10.0, 3000.0, 10 ).onChange( function ( value ) {
-    bokehPass.focus = Number( value );
-});
-bokehFolder.add( bokehDefaultParams, 'aperture', 0, 10, 0.1).onChange( function ( value ) {
-    bokehPass.aperture = Number( value );
-});
-bokehFolder.add( bokehDefaultParams, 'maxblur', 0.0, 0.01, 0.001 ).onChange( function ( value ) {
-    bokehPass.maxblur = Number( value );
-});
+
+
+
+// ---------- LOOP ----------
 
 // Animation loop
 function animate() {
@@ -281,11 +283,8 @@ function animate() {
     // Update time uniform for shader animation
     terrainMesh.material.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
 
-    // required for controls.enableDamping = true
-    controls.update(); 
-
+    controls.update(); // required for controls.enableDamping = true
     composer.render();
-    //renderer.render(scene, camera);
 }
 
 // Handle window resize

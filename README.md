@@ -1,5 +1,8 @@
 # Jared Boggs Personal Site
 
+## Run Instructions
+Launch the fastapi server with ```uv run fastapi dev main.py```
+
 ## To-Do
 1. Points of Interest
    - City/Building - Education
