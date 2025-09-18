@@ -1,12 +1,12 @@
 import * as THREE from 'three';
+import Stats from 'three/addons/libs/stats.module';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-// import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-// import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
 import { terrainVertexShader, terrainFragShader } from './shaders/terrain_shader.js';
 // imported GeoTIFF directly as a script in the HTML
 
@@ -160,9 +160,9 @@ async function genTerrainMesh(terrainData) {
     });
 
     // create points instead of mesh
-    const points = new THREE.Points(terrainGeo, terrainShaderMaterial);
+    const terrainMesh = new THREE.Points(terrainGeo, terrainShaderMaterial);
     console.log('Terrain points mesh created.');
-    return { points, shaderMaterial: terrainShaderMaterial };
+    return { terrainMesh, terrainShaderMaterial };
 }
 
 
@@ -186,7 +186,7 @@ const locationInfo = {
 
 // load map data
 const terrainTiffData = await loadGeoTIFF(locationInfo.terrainPath);
-const { terrainMesh, terrainShader } = await genTerrainMesh(terrainTiffData);
+const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(terrainTiffData);
 
 // Create a scene and camera
 const scene = new THREE.Scene();
@@ -257,10 +257,10 @@ composer.addPass( renderScenePass );
 composer.addPass( bloomPass );
 composer.addPass( outputPass );
 
-// GUI for settings
+// ---------- SETTINGS / STATS Panels ----------
 const gui = new GUI();
+gui.title('Rendering Settings');
 const terrainFolder = gui.addFolder( 'terrain' );
-terrainFolder.add( )
 const bloomFolder = gui.addFolder( 'bloom' );
 bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
     bloomPass.threshold = Number( value );
@@ -271,7 +271,10 @@ bloomFolder.add( bloomDefaultParams, 'strength', 0.0, 3.0 ).onChange( function (
 bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
     bloomPass.radius = Number( value );
 });
+gui.close();
 
+const stats = new Stats();
+document.body.appendChild(stats.dom);
 
 
 // ---------- LOOP ----------
@@ -281,10 +284,13 @@ function animate() {
     requestAnimationFrame(animate);
     
     // Update time uniform for shader animation
-    terrainMesh.material.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
+    // terrainMesh.material.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
+    terrainShaderMaterial.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
 
     controls.update(); // required for controls.enableDamping = true
     composer.render();
+
+    stats.update();
 }
 
 // Handle window resize
