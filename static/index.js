@@ -15,18 +15,25 @@ import { terrainVertexShader, terrainFragShader } from './shaders/terrain_shader
 // ---------- PARAMETERS ----------
 // TERRAIN
 const TERRAIN_VERTEX_DENSITY = 0.2;      // if subsampling (< 1.0) then elevation data must be at least TERRAIN_WIDTH wide
-const TERRAIN_HEIGHT_EXAGGERATION = 1.0; // make peaks taller
-const TERRAIN_POINT_SIZE_RATIO = 0.0006; // size of the rendered points relative to terrain
+const TERRAIN_VERTEX_JITTER = 10;        // the amount to randomly jitter vertices to reduce moire effect
 const TERRAIN_POINT_COLOR = 0x52bbcc;    // blue
 const TERRAIN_WIDTH = 2000;              // world space size of terrain mesh
 
-// TODO: add default terrain params and hook up GUI to tweak on the fly
+const terrainDefaultParams = {
+    pointSizeRatio: 0.0015,
+    heightExaggeration: 1.0,
+    pointBobAmplitude: 3.0,
+    pointBobSpeed: 0.3,
+    useSatelliteImage: true,
+    pointColor: new THREE.Color(TERRAIN_POINT_COLOR),
+    pointBrightness: 1 
+}
 
 // BLOOM
 const bloomDefaultParams = {
     threshold: 0.05,
-    strength: 0.45,
-    radius: 0.25
+    strength: 0.35,
+    radius: 0.0
 };
 
 
@@ -78,9 +85,26 @@ async function loadGeoTIFF(file){
     return { elevationData, width, length, pixelSizeX, pixelSizeY, origin, geoKeys };
 }
 
-async function genTerrainMesh(terrainData) {
+async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTexture) {
 
-    const { elevationData:terrainElevationData, width:terrainWidth, length:terrainLength, pixelSizeX, pixelSizeY, origin, geoKeys } = terrainData;
+    const { 
+        elevationData:terrainElevationData,
+        width:terrainWidth,
+        length:terrainLength,
+        pixelSizeX,
+        pixelSizeY,
+        origin,
+        geoKeys
+    } = terrainData;
+    const {
+        pointSizeRatio:defaultPointSizeRatio,
+        heightExaggeration:defaultHeightExaggeration,
+        pointBobAmplitude:defaultBobAmplitude,
+        pointBobSpeed:defaultBobSpeed,
+        useSatelliteImage:defaultUseSatelliteTexture,
+        pointColor:defaultColor,
+        pointBrightness:defaultBrightness
+    } = terrainDefaultParams;
 
     // real world dimensions
     const realWidth = terrainWidth * pixelSizeX;
@@ -108,7 +132,7 @@ async function genTerrainMesh(terrainData) {
     const terrainVertices = terrainGeo.attributes.position.array;
     
     // Jitter and elevation scaled to horizontal compression
-    const jitterAmount = 7 * worldSpaceToRealRatio;
+    const jitterAmount = TERRAIN_VERTEX_JITTER * worldSpaceToRealRatio;
     
     // offset vertex data by sampling (or sub-sampling) elevation data
     let minY = Infinity, maxY = -Infinity;
@@ -132,7 +156,8 @@ async function genTerrainMesh(terrainData) {
             const elevation = terrainElevationData[elevIdx] || 0;
             
             // offset Y value by elevation data, scaled horizontally
-            const yPos = elevation * worldSpaceToRealRatio * TERRAIN_HEIGHT_EXAGGERATION;
+            // const yPos = elevation * worldSpaceToRealRatio * TERRAIN_HEIGHT_EXAGGERATION;
+            const yPos = elevation * worldSpaceToRealRatio;
             terrainVertices[vertexIndex+1] = yPos;
             
             // Track min/max Y for debug
@@ -142,15 +167,21 @@ async function genTerrainMesh(terrainData) {
     }
     terrainGeo.attributes.position.needsUpdate = true;
 
+    // create UV map for shader
+
+
     // terrain point shader
     const terrainShaderMaterial = new THREE.ShaderMaterial({
         uniforms: {
-            pointSize: { value: TERRAIN_POINT_SIZE_RATIO * TERRAIN_WIDTH},
             time: { value: 0.0 },  // time uniform for animation, needs to be updated in main loop
-            pointBobAmount: { value: 3.0 },
-            pointBobSpeed: { value: 0.3 },
+            pointSize: { value: defaultPointSizeRatio * TERRAIN_WIDTH},
+            heightExaggeration: { value: defaultHeightExaggeration },
+            pointBobAmplitude: { value: defaultBobAmplitude},
+            pointBobSpeed: { value: defaultBobSpeed },
+            useSatelliteTexture: { value: defaultUseSatelliteTexture },
             pointColor: { value: new THREE.Color(TERRAIN_POINT_COLOR) },
-            pointBrightness: { value: 0.9 }
+            pointBrightness: { value: defaultBrightness },
+            uvTexture: { value: satelliteTexture }
         },
         vertexShader: terrainVertexShader,
         fragmentShader: terrainFragShader,
@@ -171,7 +202,9 @@ async function genTerrainMesh(terrainData) {
 
 const locationInfo = {
     locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
-    terrainPath: 'static/geodata/st_mary_valley_10m.tif'
+    terrainPath: 'static/geodata/st_mary_valley_10m.tif',
+    satelliteImagePath: 'static/geodata/st_mary_valley_satellite.png'
+    // satelliteImagePath: 'static/geodata/st_mary_valley_satellite_quantized.jpg'
 }
 
 // const locationInfo = {
@@ -185,27 +218,37 @@ const locationInfo = {
 // }
 
 // load map data
-const terrainTiffData = await loadGeoTIFF(locationInfo.terrainPath);
-const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(terrainTiffData);
+const terrainTiffData = loadGeoTIFF(locationInfo.terrainPath);
+const satelliteImageTexture = new THREE.TextureLoader().load(locationInfo.satelliteImagePath, (texture) => {
+    console.log('Texture loaded successfully:', texture.image); // Should log the image element
+});
+const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(await terrainTiffData, terrainDefaultParams, satelliteImageTexture);
 
 // Create a scene and camera
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
-    75,
+    75,    // FOV
     window.innerWidth / window.innerHeight,
-    1,  // closer near plane
-    15000  // slightly further far plane
+    1,     // near plane
+    15000  // far plane
 );
 
 // Create a renderer
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ 
     canvas,
-    // antialias: true,
     powerPreference: "high-performance"
 });
 renderer.setPixelRatio(window.devicePixelRatio);  // important for point rendering
 renderer.setSize(window.innerWidth, window.innerHeight);
+
+// render target for antialiasing
+const renderTarget = new THREE.WebGLRenderTarget(
+    window.innerWidth,
+    window.innerHeight,
+    { type: THREE.HalfFloatType }, // need this for better bloom/lighting because defaults to integer
+    {samples: 16} // 4x,8x,16x,etc MSAA
+);
 
 // Map Control
 const controls = new MapControls(camera, canvas);
@@ -235,6 +278,8 @@ camera.position.set(
 // Add terrain mesh
 scene.add(terrainMesh);
 
+
+
 // ---------- RENDER PIPELINE ----------
 
 // render
@@ -252,7 +297,7 @@ const outputPass = new OutputPass();
 
 
 // Render / Postprocessing pipeline
-const composer = new EffectComposer( renderer );
+const composer = new EffectComposer( renderer, renderTarget );
 composer.addPass( renderScenePass );
 composer.addPass( bloomPass );
 composer.addPass( outputPass );
@@ -260,7 +305,29 @@ composer.addPass( outputPass );
 // ---------- SETTINGS / STATS Panels ----------
 const gui = new GUI();
 gui.title('Rendering Settings');
+
+// terrain
 const terrainFolder = gui.addFolder( 'terrain' );
+terrainFolder.add( terrainDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH;
+});
+terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.5, 5.0 ).onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.heightExaggeration.value = Number( value );
+});
+terrainFolder.add( terrainDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 0.5 ).onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.pointBobAmplitude.value = Number( value );
+});
+terrainFolder.add( terrainDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.pointBobSpeed.value = Number( value );
+});
+terrainFolder.add( terrainDefaultParams, 'useSatelliteImage').onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.useSatelliteTexture.value = Boolean( value );
+});
+terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.pointBrightness.value = Number( value );
+});
+
+// bloom
 const bloomFolder = gui.addFolder( 'bloom' );
 bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
     bloomPass.threshold = Number( value );
@@ -273,8 +340,10 @@ bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange(
 });
 gui.close();
 
+// stats
 const stats = new Stats();
 document.body.appendChild(stats.dom);
+
 
 
 // ---------- LOOP ----------
@@ -284,7 +353,6 @@ function animate() {
     requestAnimationFrame(animate);
     
     // Update time uniform for shader animation
-    // terrainMesh.material.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
     terrainShaderMaterial.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
 
     controls.update(); // required for controls.enableDamping = true

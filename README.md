@@ -4,6 +4,8 @@
 Launch the fastapi server with ```uv run fastapi dev main.py```
 
 ## To-Do
+1. Terrain / Shader
+   - adjust vertex data so starts at y=0
 1. Points of Interest
    - City/Building - Education
    - Satellite Station - Contact Info
@@ -15,7 +17,6 @@ Launch the fastapi server with ```uv run fastapi dev main.py```
 3. Polish
    - Postprocessing effects
      - Depth of Field 
-     - Bloom
      - Ground Fog
    - animations
    - background
