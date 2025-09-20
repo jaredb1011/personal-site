@@ -32,13 +32,10 @@ export const terrainVertexShader = /* glsl */`
     }
 `;
 
-export const terrainFragShader = /* glsl */`
+export const terrainImageFragShader = /* glsl */`
     // varyings are received from vertex shader
     varying vec3 vPosition;
     varying vec2 vUv;
-    uniform vec3 pointColor;
-    uniform bool useSatelliteTexture;
-    uniform float pointBrightness;
     uniform sampler2D uvTexture;
 
     void main() {
@@ -51,11 +48,27 @@ export const terrainFragShader = /* glsl */`
             discard;
         }
 
-        if (useSatelliteTexture) {
-            gl_FragColor = texture2D(uvTexture, vUv);
+        gl_FragColor = texture2D(uvTexture, vUv);
+    }
+`;
+
+export const terrainColorFragShader = /* glsl */`
+    // varyings are received from vertex shader
+    varying vec3 vPosition;
+    varying vec2 vUv;
+    uniform vec3 pointColor;
+    uniform float pointBrightness;
+
+    void main() {
+        // Calculate point coordinates
+        vec2 center = gl_PointCoord - vec2(0.5);
+        float dist = length(center) * 2.0;
+
+        // Discard pixels outside the circle
+        if (dist > 1.0) {
+            discard;
         }
-        else {
-            gl_FragColor = vec4(pointColor * pointBrightness, 1.0);
-        }
+
+        gl_FragColor = vec4(pointColor * pointBrightness, 1.0);
     }
 `;

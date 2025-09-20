@@ -6,18 +6,16 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-
-import { terrainVertexShader, terrainFragShader } from './shaders/terrain_shader.js';
 // imported GeoTIFF directly as a script in the HTML
-
+import { loadOBJGeometry } from './utils/LoadOBJGeometry.js';
+import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 
 
 // ---------- PARAMETERS ----------
 // TERRAIN
-const TERRAIN_VERTEX_DENSITY = 0.2;      // if subsampling (< 1.0) then elevation data must be at least TERRAIN_WIDTH wide
-const TERRAIN_VERTEX_JITTER = 10;        // the amount to randomly jitter vertices to reduce moire effect
-const TERRAIN_POINT_COLOR = 0x52bbcc;    // blue
 const TERRAIN_WIDTH = 2000;              // world space size of terrain mesh
+const TERRAIN_VERTEX_DENSITY = 0.3;      // if subsampling (< 1.0) then elevation data must be at least TERRAIN_WIDTH wide
+const TERRAIN_VERTEX_JITTER = 10;        // the amount to randomly jitter vertices to reduce moire effect
 
 const terrainDefaultParams = {
     pointSizeRatio: 0.0015,
@@ -25,7 +23,7 @@ const terrainDefaultParams = {
     pointBobAmplitude: 3.0,
     pointBobSpeed: 0.3,
     useSatelliteImage: true,
-    pointColor: new THREE.Color(TERRAIN_POINT_COLOR),
+    pointColor: 0x52bbcc, // blue
     pointBrightness: 1 
 }
 
@@ -34,6 +32,20 @@ const bloomDefaultParams = {
     threshold: 0.05,
     strength: 0.35,
     radius: 0.0
+};
+
+
+// MAP CONTROLS
+const mapControlDefaultParams = {
+    zoomSpeed: 0.8,
+    rotateSpeed: 0.5,
+    panSpeed: 0.8,
+    minDistance: 0.03,
+    maxDistance: 2.0,
+    maxViewAngle: 2.8,
+    minViewAngle: 0.0,
+    zoomToCursor: true,
+    controlDampingFactor: 0.05
 };
 
 
@@ -160,17 +172,26 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
             const yPos = elevation * worldSpaceToRealRatio;
             terrainVertices[vertexIndex+1] = yPos;
             
-            // Track min/max Y for debug
+            // Track min/max Y
             if (yPos < minY) minY = yPos;
             if (yPos > maxY) maxY = yPos;
         }
     }
-    terrainGeo.attributes.position.needsUpdate = true;
 
-    // create UV map for shader
+    // shift points down so minY = 0
+    for (let j=0; j<terrainVertices.length; j+=3) {
+        terrainVertices[j+1] -= minY;
+    }
+
+    terrainGeo.attributes.position.needsUpdate = true;
 
 
     // terrain point shader
+    const terrainFragShader = terrainImageFragShader;
+    if (!defaultUseSatelliteTexture){
+        terrainFragShader = terrainColorFragShader;
+    }
+
     const terrainShaderMaterial = new THREE.ShaderMaterial({
         uniforms: {
             time: { value: 0.0 },  // time uniform for animation, needs to be updated in main loop
@@ -178,13 +199,12 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
             heightExaggeration: { value: defaultHeightExaggeration },
             pointBobAmplitude: { value: defaultBobAmplitude},
             pointBobSpeed: { value: defaultBobSpeed },
-            useSatelliteTexture: { value: defaultUseSatelliteTexture },
-            pointColor: { value: new THREE.Color(TERRAIN_POINT_COLOR) },
+            pointColor: { value: new THREE.Color(defaultColor) },
             pointBrightness: { value: defaultBrightness },
             uvTexture: { value: satelliteTexture }
         },
         vertexShader: terrainVertexShader,
-        fragmentShader: terrainFragShader,
+        fragmentShader: terrainFragShader, 
         depthTest: true,
         depthWrite: true,
         blending: THREE.NormalBlending
@@ -197,32 +217,21 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
 }
 
 
-
-// ---------- BUILD SCENE ----------
-
-const locationInfo = {
-    locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
-    terrainPath: 'static/geodata/st_mary_valley_10m.tif',
-    satelliteImagePath: 'static/geodata/st_mary_valley_satellite.png'
-    // satelliteImagePath: 'static/geodata/st_mary_valley_satellite_quantized.jpg'
+// ---------- 3D MODELS / MESHES ----------
+async function createRadarMesh() {
+    const radarGeom = await loadOBJGeometry('static/models/mobile_radar/16012_Mobile_Radar_System_v1.obj');
+    const radarWireframeGeom = new THREE.WireframeGeometry( radarGeom );
+    const radarMaterial = new THREE.LineBasicMaterial({
+        color: new THREE.Color(0x52bbcc)
+    }); // temp for debug
+    const radarMesh = new THREE.LineSegments(radarWireframeGeom, radarMaterial);
+    radarMesh.rotateX(-Math.PI/2);
+    radarMesh.scale.set(1.5, 1.5, 1.5);
+    return radarMesh;
 }
 
-// const locationInfo = {
-//     locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
-//     terrainPath: 'static/geodata/st_mary_valley_terrain.tif'
-// }
 
-// const locationInfo = {
-//     locationName: 'Huntsville // Alabama, U.S.A // Rocket City',
-//     terrainPath: 'static/geodata/huntsville_al.tif'
-// }
-
-// load map data
-const terrainTiffData = loadGeoTIFF(locationInfo.terrainPath);
-const satelliteImageTexture = new THREE.TextureLoader().load(locationInfo.satelliteImagePath, (texture) => {
-    console.log('Texture loaded successfully:', texture.image); // Should log the image element
-});
-const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(await terrainTiffData, terrainDefaultParams, satelliteImageTexture);
+// ---------- RENDER/CAMERA SETUP ----------
 
 // Create a scene and camera
 const scene = new THREE.Scene();
@@ -253,19 +262,19 @@ const renderTarget = new THREE.WebGLRenderTarget(
 // Map Control
 const controls = new MapControls(camera, canvas);
 controls.enableDamping = true;
-controls.dampingFactor = 0.05;
+controls.dampingFactor = mapControlDefaultParams.controlDampingFactor;
 controls.screenSpacePanning = false;
-controls.zoomSpeed = 0.5
-controls.rotateSpeed = 0.5
-controls.panSpeed = 0.8;
-controls.zoomToCursor = true;
+controls.zoomSpeed = mapControlDefaultParams.zoomSpeed;
+controls.rotateSpeed = mapControlDefaultParams.rotateSpeed; 
+controls.panSpeed = mapControlDefaultParams.panSpeed;
+controls.zoomToCursor = mapControlDefaultParams.zoomToCursor;
 
 // Configure controls for bird's eye view
-controls.target.set(0, 0, 0);               // look at center of terrain
-controls.minDistance = TERRAIN_WIDTH*0.05;  // allow closer zoom
-controls.maxDistance = TERRAIN_WIDTH * 2;   // allow further zoom out
-controls.maxPolarAngle = Math.PI / 2.8;     // Limit how low you can orbit (prevent seeing under terrain)
-controls.minPolarAngle = 0;                 // Allow complete top-down view
+controls.target.set(0, 0, 0);                                                // look at center of terrain
+controls.minDistance = TERRAIN_WIDTH * mapControlDefaultParams.minDistance;    // allow closer zoom
+controls.maxDistance = TERRAIN_WIDTH * mapControlDefaultParams.maxDistance;  // allow further zoom out
+controls.maxPolarAngle = Math.PI / mapControlDefaultParams.maxViewAngle;     // Limit how low you can orbit (prevent seeing under terrain)
+controls.minPolarAngle = mapControlDefaultParams.minViewAngle;              // Allow complete top-down view
 controls.update();
 
 // Position camera above terrain for initial bird's eye view
@@ -275,8 +284,50 @@ camera.position.set(
     TERRAIN_WIDTH/3
 );
 
+// Fog [WIP]
+// scene.fog = new THREE.Fog( 0xcccccc, 10, 15);
+
+// ---------- BUILD SCENE ----------
+
+const locationInfo = {
+    locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
+    terrainPath: 'static/geodata/st_mary_valley_10m.tif',
+    satelliteImagePath: 'static/geodata/st_mary_valley_satellite.png'
+    // satelliteImagePath: 'static/geodata/st_mary_valley_satellite_quantized.jpg'
+};
+
+// const locationInfo = {
+//     locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
+//     terrainPath: 'static/geodata/st_mary_valley_terrain.tif'
+// }
+
+// const locationInfo = {
+//     locationName: 'Huntsville // Alabama, U.S.A // Rocket City',
+//     terrainPath: 'static/geodata/huntsville_al.tif'
+// }
+
+// load map data
+const terrainTiffData = loadGeoTIFF(locationInfo.terrainPath);
+const satelliteImageTexture = new THREE.TextureLoader().load(locationInfo.satelliteImagePath, (texture) => {
+    console.log('Texture loaded successfully:', texture.image);
+});
+const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(await terrainTiffData, terrainDefaultParams, satelliteImageTexture);
+
 // Add terrain mesh
 scene.add(terrainMesh);
+
+// Load interactive objects
+const interactiveContactInfo = new THREE.Object3D();
+interactiveContactInfo.position.set(
+    TERRAIN_WIDTH/3.3,
+    TERRAIN_WIDTH/45,
+    TERRAIN_WIDTH/3.3,
+);
+terrainMesh.add(interactiveContactInfo);
+
+const radarMesh = await createRadarMesh();
+radarMesh.rotateZ(Math.PI/4)
+interactiveContactInfo.add(radarMesh);
 
 
 
@@ -302,6 +353,8 @@ composer.addPass( renderScenePass );
 composer.addPass( bloomPass );
 composer.addPass( outputPass );
 
+
+
 // ---------- SETTINGS / STATS Panels ----------
 const gui = new GUI();
 gui.title('Rendering Settings');
@@ -320,12 +373,31 @@ terrainFolder.add( terrainDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 
 terrainFolder.add( terrainDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.pointBobSpeed.value = Number( value );
 });
-terrainFolder.add( terrainDefaultParams, 'useSatelliteImage').onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.useSatelliteTexture.value = Boolean( value );
+const satImgCtrl = terrainFolder.add( terrainDefaultParams, 'useSatelliteImage' )
+
+const colorCtrl = terrainFolder.addColor( terrainDefaultParams, 'pointColor' ).onChange( function (value ) {
+    terrainShaderMaterial.uniforms.pointColor.value = new THREE.Color( value );
 });
-terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
+const brightnessCtrl = terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.pointBrightness.value = Number( value );
 });
+// hide color/brightness when using satellite image
+satImgCtrl.onChange( function ( value ) {
+    const useSatBool = Boolean( value );
+    if (useSatBool) {
+        terrainShaderMaterial.fragmentShader = terrainImageFragShader;
+        terrainShaderMaterial.needsUpdate = true;
+        colorCtrl.disable();
+        brightnessCtrl.disable();
+    }
+    else {
+        terrainShaderMaterial.fragmentShader = terrainColorFragShader;
+        terrainShaderMaterial.needsUpdate = true;
+        colorCtrl.enable();
+        brightnessCtrl.enable();
+    }
+});
+console.log(gui.controllersRecursive());
 
 // bloom
 const bloomFolder = gui.addFolder( 'bloom' );
@@ -366,6 +438,8 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderTarget.setSize(window.innerWidth, window.innerHeight);
+    bloomPass.setSize(window.innerWidth, window.innerHeight);
 });
 
 // Start the animation loop
