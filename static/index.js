@@ -8,7 +8,9 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // imported GeoTIFF directly as a script in the HTML
 import { loadOBJGeometry } from './utils/LoadOBJGeometry.js';
+import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
+import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
 
 
 // ---------- PARAMETERS ----------
@@ -94,7 +96,7 @@ async function loadGeoTIFF(file){
     console.log(`Pixel Resolution: ${pixelSizeX}m x ${pixelSizeY}m`);
     console.log(`Origin: ${origin}`);
     console.log(`GeoKeys:`, geoKeys);
-    return { elevationData, width, length, pixelSizeX, pixelSizeY, origin, geoKeys };
+    return { elevationData, width, length, pixelSizeX, pixelSizeY};
 }
 
 async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTexture) {
@@ -104,9 +106,7 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
         width:terrainWidth,
         length:terrainLength,
         pixelSizeX,
-        pixelSizeY,
-        origin,
-        geoKeys
+        pixelSizeY
     } = terrainData;
     const {
         pointSizeRatio:defaultPointSizeRatio,
@@ -222,14 +222,39 @@ async function createRadarMesh() {
     const radarGeom = await loadOBJGeometry('static/models/mobile_radar/16012_Mobile_Radar_System_v1.obj');
     const radarWireframeGeom = new THREE.WireframeGeometry( radarGeom );
     const radarMaterial = new THREE.LineBasicMaterial({
-        color: new THREE.Color(0x52bbcc)
+        color: new THREE.Color(0x0f1773)
     }); // temp for debug
     const radarMesh = new THREE.LineSegments(radarWireframeGeom, radarMaterial);
     radarMesh.rotateX(-Math.PI/2);
+    radarMesh.position.set(0, 0, 0);
     radarMesh.scale.set(1.5, 1.5, 1.5);
     return radarMesh;
 }
 
+async function createHoverDisk() {
+    const circleGeom = new THREE.CircleGeometry(
+        TERRAIN_WIDTH * 0.04, // radius
+        25, // segments
+        0.0, // thetaStart
+        2.00 * Math.PI // thetaLength
+    );
+    const circleMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+            uColor: { value: new THREE.Color(0xffffff) },
+            uFadePercent: { value: 0.0 }
+        },
+        vertexShader: hoverDiskVertexShader,
+        fragmentShader: hoverDiskFragShader,
+        depthTest: true,
+        depthWrite: true,
+        blending: THREE.AdditiveBlending
+        // blending: THREE.NormalBlending
+    });
+    const diskMesh = new THREE.Mesh( circleGeom, circleMaterial );
+    diskMesh.position.set(0, 0, 0);
+    diskMesh.rotateX(-Math.PI/2);
+    return diskMesh;
+}
 
 // ---------- RENDER/CAMERA SETUP ----------
 
@@ -315,6 +340,7 @@ const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(await terrai
 
 // Add terrain mesh
 scene.add(terrainMesh);
+terrainMesh.pickable = false;
 
 // Load interactive objects
 const interactiveContactInfo = new THREE.Object3D();
@@ -323,9 +349,15 @@ interactiveContactInfo.position.set(
     TERRAIN_WIDTH/45,
     TERRAIN_WIDTH/3.3,
 );
+interactiveContactInfo.pickable = false;
 terrainMesh.add(interactiveContactInfo);
 
+const hoverDiskMesh = await createHoverDisk();
+hoverDiskMesh.pickable = true;
+interactiveContactInfo.add(hoverDiskMesh);
+
 const radarMesh = await createRadarMesh();
+radarMesh.pickable = false;
 radarMesh.rotateZ(Math.PI/4)
 interactiveContactInfo.add(radarMesh);
 
@@ -418,14 +450,56 @@ document.body.appendChild(stats.dom);
 
 
 
-// ---------- LOOP ----------
+// ---------- Object Picking ----------
+const objPick = new objectPicker();
+objPick.setPickableObjects([interactiveContactInfo]);
+let intersectedObj = null;
+let pickedObj = null;
+let pickPos = new THREE.Vector2(0.0, 0.0);
+clearPickPosition();
 
+function getCanvasRelativePosition(event) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: (event.clientX - rect.left) * canvas.width/rect.width,
+        y: (event.clientY - rect.top) * canvas.height/rect.height,
+    }
+}
+function setPickPosition(event) {
+    const pos = getCanvasRelativePosition(event);
+    pickPos.x = (pos.x / canvas.width) * 2 - 1;
+    pickPos.y = (pos.y / canvas.height) * -2 + 1; // flipped Y
+    // perform raycast to get hovered object
+    intersectedObj = objPick.pick(pickPos, camera);
+}
+function clearPickPosition() {
+    pickPos.x = -100000;
+    pickPos.y = -100000;
+}
+window.addEventListener('mousemove', setPickPosition);
+window.addEventListener('mouseout', clearPickPosition);
+window.addEventListener('mouseleave', clearPickPosition);
+
+// ---------- LOOP ----------
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
     
-    // Update time uniform for shader animation
+    // Update time uniform for terrain bobbing animation
     terrainShaderMaterial.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
+
+    // Check for picked objects / hover
+    if (intersectedObj !== pickedObj) {
+        // Reset previous if it exists
+        if (pickedObj !== null) {
+            pickedObj.material.uniforms.uFadePercent.value = 0.0;
+        }
+        // Set new if hovering something
+        if (intersectedObj !== null) {
+            intersectedObj.material.uniforms.uFadePercent.value = 1.0;
+        }
+        pickedObj = intersectedObj;
+    }
 
     controls.update(); // required for controls.enableDamping = true
     composer.render();
