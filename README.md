@@ -5,16 +5,16 @@ Launch the fastapi server with ```uv run fastapi dev main.py```
 
 ## To-Do
 1. Terrain / Shader
-   - adjust vertex data so starts at y=0
-1. Points of Interest
+   - Adjust brightness in sat image mode
+2. Points of Interest
    - City/Building - Education
    - Satellite Station - Contact Info
    - Defensive Station - Skills & Certs
    - Air Targets - Job Experience
-2. Interactivity
+3. Interactivity
    - Click on a POI to zoom into a static view location
    - POI is on one half, window appears with text content
-3. Polish
+4. Polish
    - Postprocessing effects
      - Depth of Field 
      - Ground Fog

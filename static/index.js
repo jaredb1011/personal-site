@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import Stats from 'three/addons/libs/stats.module';
+import Stats from 'three/addons/libs/stats.module.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -26,8 +26,13 @@ const terrainDefaultParams = {
     pointBobSpeed: 0.3,
     useSatelliteImage: true,
     pointColor: 0x52bbcc, // blue
-    pointBrightness: 1 
-}
+    pointBrightness: 1
+};
+
+const borderDefaultParams = {
+    borderWidth: 0.02, // percent of the terrain that should be edge border
+    borderColor: 0xbefed6 // brownish orange
+};
 
 // BLOOM
 const bloomDefaultParams = {
@@ -99,7 +104,7 @@ async function loadGeoTIFF(file){
     return { elevationData, width, length, pixelSizeX, pixelSizeY};
 }
 
-async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTexture) {
+async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTexture, borderDefaultParams) {
 
     const { 
         elevationData:terrainElevationData,
@@ -115,8 +120,12 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
         pointBobSpeed:defaultBobSpeed,
         useSatelliteImage:defaultUseSatelliteTexture,
         pointColor:defaultColor,
-        pointBrightness:defaultBrightness
+        pointBrightness:defaultBrightness,
     } = terrainDefaultParams;
+    const {
+        borderWidth:defaultBorderWidth,
+        borderColor:defaultBorderColor
+    } = borderDefaultParams;
 
     // real world dimensions
     const realWidth = terrainWidth * pixelSizeX;
@@ -201,6 +210,8 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
             pointBobSpeed: { value: defaultBobSpeed },
             pointColor: { value: new THREE.Color(defaultColor) },
             pointBrightness: { value: defaultBrightness },
+            borderThreshold: { value: (1-defaultBorderWidth)*0.5 },
+            borderColor: { value: new THREE.Color(defaultBorderColor) },
             uvTexture: { value: satelliteTexture }
         },
         vertexShader: terrainVertexShader,
@@ -336,7 +347,12 @@ const terrainTiffData = loadGeoTIFF(locationInfo.terrainPath);
 const satelliteImageTexture = new THREE.TextureLoader().load(locationInfo.satelliteImagePath, (texture) => {
     console.log('Texture loaded successfully:', texture.image);
 });
-const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(await terrainTiffData, terrainDefaultParams, satelliteImageTexture);
+const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(
+    await terrainTiffData,
+    terrainDefaultParams,
+    satelliteImageTexture,
+    borderDefaultParams
+);
 
 // Add terrain mesh
 scene.add(terrainMesh);
@@ -429,8 +445,14 @@ satImgCtrl.onChange( function ( value ) {
         brightnessCtrl.enable();
     }
 });
-console.log(gui.controllersRecursive());
-
+// border
+const borderFolder = gui.addFolder( 'border' );
+borderFolder.add( borderDefaultParams, 'borderWidth', 0.002, 0.1 ).onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.borderThreshold.value = (1.0 - value)*0.5;
+});
+borderFolder.addColor( borderDefaultParams, 'borderColor').onChange( function ( value ) {
+    terrainShaderMaterial.uniforms.borderColor.value = new THREE.Color( value );
+});
 // bloom
 const bloomFolder = gui.addFolder( 'bloom' );
 bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
