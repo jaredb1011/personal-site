@@ -7,7 +7,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // imported GeoTIFF directly as a script in the HTML
-import { loadOBJGeometry } from './utils/LoadOBJGeometry.js';
+import { loadOBJ, applyMaterialToObjMesh } from './utils/objLoading.js';
 import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
@@ -230,21 +230,22 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
 
 // ---------- 3D MODELS / MESHES ----------
 async function createRadarMesh() {
-    const radarGeom = await loadOBJGeometry('static/models/mobile_radar/16012_Mobile_Radar_System_v1.obj');
-    const radarWireframeGeom = new THREE.WireframeGeometry( radarGeom );
-    const radarMaterial = new THREE.LineBasicMaterial({
-        color: new THREE.Color(0x0f1773)
-    }); // temp for debug
-    const radarMesh = new THREE.LineSegments(radarWireframeGeom, radarMaterial);
-    radarMesh.rotateX(-Math.PI/2);
+    const radarMesh = await loadOBJ('static/models/radar_tower/Radar_Tower.obj');
+    console.log(`radarMesh: ${radarMesh}`);
+
+    const radarMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(0x85b8e2)
+    });
+
+    applyMaterialToObjMesh(radarMesh, radarMaterial);
     radarMesh.position.set(0, 0, 0);
-    radarMesh.scale.set(1.5, 1.5, 1.5);
+    radarMesh.scale.set(20, 20, 20);
     return radarMesh;
 }
 
 async function createHoverDisk() {
     const circleGeom = new THREE.CircleGeometry(
-        TERRAIN_WIDTH * 0.04, // radius
+        TERRAIN_WIDTH * 0.05, // radius
         25, // segments
         0.0, // thetaStart
         2.00 * Math.PI // thetaLength
@@ -320,8 +321,7 @@ camera.position.set(
     TERRAIN_WIDTH/3
 );
 
-// Fog [WIP]
-// scene.fog = new THREE.Fog( 0xcccccc, 10, 15);
+
 
 // ---------- BUILD SCENE ----------
 
@@ -331,16 +331,6 @@ const locationInfo = {
     satelliteImagePath: 'static/geodata/st_mary_valley_satellite.png'
     // satelliteImagePath: 'static/geodata/st_mary_valley_satellite_quantized.jpg'
 };
-
-// const locationInfo = {
-//     locationName: 'St. Mary Valley // Glacier National Park // Montana, U.S.A',
-//     terrainPath: 'static/geodata/st_mary_valley_terrain.tif'
-// }
-
-// const locationInfo = {
-//     locationName: 'Huntsville // Alabama, U.S.A // Rocket City',
-//     terrainPath: 'static/geodata/huntsville_al.tif'
-// }
 
 // load map data
 const terrainTiffData = loadGeoTIFF(locationInfo.terrainPath);
@@ -361,9 +351,9 @@ terrainMesh.pickable = false;
 // Load interactive objects
 const interactiveContactInfo = new THREE.Object3D();
 interactiveContactInfo.position.set(
-    TERRAIN_WIDTH/3.3,
-    TERRAIN_WIDTH/45,
-    TERRAIN_WIDTH/3.3,
+    TERRAIN_WIDTH/4.2,
+    TERRAIN_WIDTH/165,
+    TERRAIN_WIDTH/4.0,
 );
 interactiveContactInfo.pickable = false;
 terrainMesh.add(interactiveContactInfo);
@@ -374,7 +364,7 @@ interactiveContactInfo.add(hoverDiskMesh);
 
 const radarMesh = await createRadarMesh();
 radarMesh.pickable = false;
-radarMesh.rotateZ(Math.PI/4)
+// radarMesh.rotateZ(Math.PI/4)
 interactiveContactInfo.add(radarMesh);
 
 
@@ -470,15 +460,15 @@ gui.close();
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
-
-
 // ---------- Object Picking ----------
 const objPick = new objectPicker();
-objPick.setPickableObjects([interactiveContactInfo]);
+objPick.setPickableObjects([
+    interactiveContactInfo
+]);
+// globals
 let intersectedObj = null;
 let pickedObj = null;
 let pickPos = new THREE.Vector2(0.0, 0.0);
-clearPickPosition();
 
 function getCanvasRelativePosition(event) {
     const rect = canvas.getBoundingClientRect();
@@ -498,9 +488,19 @@ function clearPickPosition() {
     pickPos.x = -100000;
     pickPos.y = -100000;
 }
+clearPickPosition();
+
+function handleClicks(event) {
+    console.log(`Click Event on target: ${event.target}`);
+};
+
+// event listeners
+window.addEventListener('click', handleClicks);
 window.addEventListener('mousemove', setPickPosition);
 window.addEventListener('mouseout', clearPickPosition);
 window.addEventListener('mouseleave', clearPickPosition);
+
+
 
 // ---------- LOOP ----------
 // Animation loop
