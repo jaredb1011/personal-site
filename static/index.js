@@ -12,15 +12,26 @@ import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
 
+console.log("Welcome to my website! I'm Jared Boggs. I must admit I'm a THREE.js and rendering noob, but inspect away.");
 
 // ---------- PARAMETERS ----------
 // TERRAIN
-const TERRAIN_WIDTH = 2000;              // world space size of terrain mesh
-const TERRAIN_VERTEX_DENSITY = 0.3;      // if subsampling (< 1.0) then elevation data must be at least TERRAIN_WIDTH wide
-const TERRAIN_VERTEX_JITTER = 10;        // the amount to randomly jitter vertices to reduce moire effect
+// world space size of terrain mesh in three.js units. This is somewhat arbitrary.
+const TERRAIN_WIDTH = 2000;  
 
+// The percentage of of the original terrain data points to use as vertices for the mesh.
+// If subsampling (this value < 1.0) then the terrain elevation data must be at least TERRAIN_WIDTH wide.
+const TERRAIN_VERTEX_DENSITY = 0.5;      
+
+// A bunch of points in a straight line grid is subject to an ugly moire effect when zoomed out.
+// Applying a jitter to the x/y position breaks up the grid and reduces the effect.
+const TERRAIN_VERTEX_JITTER = 10; 
+
+
+
+// ---------- USER SETTINGS ----------
 const terrainDefaultParams = {
-    pointSizeRatio: 0.0015,
+    pointSizeRatio: 0.0007,
     heightExaggeration: 1.0,
     pointBobAmplitude: 3.0,
     pointBobSpeed: 0.3,
@@ -34,15 +45,12 @@ const borderDefaultParams = {
     borderColor: 0xbefed6 // brownish orange
 };
 
-// BLOOM
 const bloomDefaultParams = {
     threshold: 0.05,
     strength: 0.35,
     radius: 0.0
 };
 
-
-// MAP CONTROLS
 const mapControlDefaultParams = {
     zoomSpeed: 0.8,
     rotateSpeed: 0.5,
@@ -54,6 +62,7 @@ const mapControlDefaultParams = {
     zoomToCursor: true,
     controlDampingFactor: 0.05
 };
+
 
 
 // ---------- TERRAIN LOADING ----------  
@@ -83,24 +92,24 @@ async function loadGeoTIFF(file){
         const metersPerDegLon = metersPerDegLat * Math.cos(latitude * Math.PI / 180); // Adjust for longitude
         pixelSizeX = Math.abs(resolution[0]) * metersPerDegLon; // Width (lon) in meters
         pixelSizeY = Math.abs(resolution[1]) * metersPerDegLat; // Height (lat) in meters
-        console.log(`Geographic CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m at lat=${latitude}`);
+        console.debug(`Geographic CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m at lat=${latitude}`);
     } else {
         // Projected coordinates (assume meters)
         pixelSizeX = Math.abs(resolution[0]);
         pixelSizeY = Math.abs(resolution[1]);
-        console.log(`Projected CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m`);
+        console.debug(`Projected CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m`);
     } 
     // // Override with assumed 10m if projected but resolution tiny
     // if (geoKeys.GTModelTypeGeoKey === 2 && pixelSizeX < 0.001) {
     //     pixelSizeX = 10;  // Assume 1-arc-second (~20m at this latitude)
     //     pixelSizeY = 10;
-    //     console.log(`Overriding tiny resolution with assumed 10m x 10m`);
+    //     console.debug(`Overriding tiny resolution with assumed 10m x 10m`);
     // }
 
-    console.log(`Width: ${width}, Height: ${length}`);
-    console.log(`Pixel Resolution: ${pixelSizeX}m x ${pixelSizeY}m`);
-    console.log(`Origin: ${origin}`);
-    console.log(`GeoKeys:`, geoKeys);
+    console.debug(`Width: ${width}, Height: ${length}`);
+    console.debug(`Pixel Resolution: ${pixelSizeX}m x ${pixelSizeY}m`);
+    console.debug(`Origin: ${origin}`);
+    console.debug(`GeoKeys:`, geoKeys);
     return { elevationData, width, length, pixelSizeX, pixelSizeY};
 }
 
@@ -130,18 +139,18 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
     // real world dimensions
     const realWidth = terrainWidth * pixelSizeX;
     const realLength = terrainLength * pixelSizeY;
-    console.log(`Real Extents: ${realWidth}m wide x ${realLength}m long`);
+    console.debug(`Real Extents: ${realWidth}m wide x ${realLength}m long`);
     const aspectRatio = realLength / realWidth;
-    console.log(`Aspect Ratio (L/W): ${aspectRatio}`);
+    console.debug(`Aspect Ratio (L/W): ${aspectRatio}`);
 
     // Uniform scale factor to fit real extents into world space
     const worldSpaceToRealRatio = TERRAIN_WIDTH / realWidth;
-    console.log(`World Space to Real Word Unit ratio: ${worldSpaceToRealRatio}`);
+    console.debug(`World Space to Real Word Unit ratio: ${worldSpaceToRealRatio}`);
 
     //create initial flat plane with correct # of vertices
     const widthVertices = Math.max(1, Math.floor(terrainWidth * TERRAIN_VERTEX_DENSITY));
     const lengthVertices = Math.max(1, Math.floor(terrainLength * TERRAIN_VERTEX_DENSITY));
-    console.log(`Vertex Density: ${TERRAIN_VERTEX_DENSITY}, Width Verts: ${widthVertices}, Length Verts: ${lengthVertices}, Total Verts: ${widthVertices * lengthVertices}`);
+    console.debug(`Vertex Density: ${TERRAIN_VERTEX_DENSITY}, Width Verts: ${widthVertices}, Length Verts: ${lengthVertices}, Total Verts: ${widthVertices * lengthVertices}`);
     
     const terrainGeo = new THREE.PlaneGeometry(
         TERRAIN_WIDTH,                // world space width
@@ -204,7 +213,7 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
     const terrainShaderMaterial = new THREE.ShaderMaterial({
         uniforms: {
             time: { value: 0.0 },  // time uniform for animation, needs to be updated in main loop
-            pointSize: { value: defaultPointSizeRatio * TERRAIN_WIDTH},
+            pointSize: { value: defaultPointSizeRatio * TERRAIN_WIDTH * window.devicePixelRatio},
             heightExaggeration: { value: defaultHeightExaggeration },
             pointBobAmplitude: { value: defaultBobAmplitude},
             pointBobSpeed: { value: defaultBobSpeed },
@@ -223,24 +232,48 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
 
     // create points instead of mesh
     const terrainMesh = new THREE.Points(terrainGeo, terrainShaderMaterial);
-    console.log('Terrain points mesh created.');
+    console.debug('Terrain points mesh created.');
     return { terrainMesh, terrainShaderMaterial };
 }
 
 
 // ---------- 3D MODELS / MESHES ----------
-async function createRadarMesh() {
-    const radarMesh = await loadOBJ('static/models/radar_tower/Radar_Tower.obj');
-    console.log(`radarMesh: ${radarMesh}`);
 
-    const radarMaterial = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(0x85b8e2)
+const radarModelData = {
+    path: 'static/models/radar_tower/Radar_Tower.obj',
+    meshColor: 0x000000,
+    edgeColor: 0xffffff,
+    edgeAngle: 5,
+    scale: 20
+};
+
+async function createOutlinedObjMesh(objData) {
+    const objMesh = await loadOBJ(objData.path);
+    console.debug(`objMesh: ${objMesh}`);
+
+    const objMaterial = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(objData.meshColor)
     });
 
-    applyMaterialToObjMesh(radarMesh, radarMaterial);
-    radarMesh.position.set(0, 0, 0);
-    radarMesh.scale.set(20, 20, 20);
-    return radarMesh;
+    applyMaterialToObjMesh(objMesh, objMaterial);
+
+    const edgeMaterial = new THREE.LineBasicMaterial({
+        color: objData.edgeColor,
+        linewidth: 1
+    });
+
+    // add each submesh's line segments to the main mesh
+    objMesh.children.forEach(element => {
+        objMesh.add(new THREE.LineSegments(
+            new THREE.EdgesGeometry(element.geometry, objData.edgeAngle),
+            edgeMaterial
+        ));
+    });
+
+    objMesh.position.set(0, 0, 0);
+    objMesh.scale.set(objData.scale, objData.scale, objData.scale);
+
+    return objMesh;
 }
 
 async function createHoverDisk() {
@@ -267,6 +300,8 @@ async function createHoverDisk() {
     diskMesh.rotateX(-Math.PI/2);
     return diskMesh;
 }
+
+
 
 // ---------- RENDER/CAMERA SETUP ----------
 
@@ -335,7 +370,7 @@ const locationInfo = {
 // load map data
 const terrainTiffData = loadGeoTIFF(locationInfo.terrainPath);
 const satelliteImageTexture = new THREE.TextureLoader().load(locationInfo.satelliteImagePath, (texture) => {
-    console.log('Texture loaded successfully:', texture.image);
+    console.debug('Texture loaded successfully:', texture.image);
 });
 const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(
     await terrainTiffData,
@@ -362,7 +397,7 @@ const hoverDiskMesh = await createHoverDisk();
 hoverDiskMesh.pickable = true;
 interactiveContactInfo.add(hoverDiskMesh);
 
-const radarMesh = await createRadarMesh();
+const radarMesh = await createOutlinedObjMesh(radarModelData);
 radarMesh.pickable = false;
 // radarMesh.rotateZ(Math.PI/4)
 interactiveContactInfo.add(radarMesh);
@@ -375,7 +410,6 @@ interactiveContactInfo.add(radarMesh);
 const renderScenePass = new RenderPass( scene, camera );
 
 // bloom
-
 const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85);
 bloomPass.threshold = bloomDefaultParams.threshold;
 bloomPass.strength = bloomDefaultParams.strength;
@@ -383,7 +417,6 @@ bloomPass.radius = bloomDefaultParams.radius;
 
 // output
 const outputPass = new OutputPass();
-
 
 // Render / Postprocessing pipeline
 const composer = new EffectComposer( renderer, renderTarget );
@@ -400,7 +433,7 @@ gui.title('Rendering Settings');
 // terrain
 const terrainFolder = gui.addFolder( 'terrain' );
 terrainFolder.add( terrainDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH;
+    terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH * window.devicePixelRatio;
 });
 terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.5, 5.0 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.heightExaggeration.value = Number( value );
@@ -460,6 +493,8 @@ gui.close();
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
+
+
 // ---------- Object Picking ----------
 const objPick = new objectPicker();
 objPick.setPickableObjects([
@@ -491,7 +526,7 @@ function clearPickPosition() {
 clearPickPosition();
 
 function handleClicks(event) {
-    console.log(`Click Event on target: ${event.target}`);
+    console.debug(`Click Event on target: ${event.target}`);
 };
 
 // event listeners
@@ -531,11 +566,29 @@ function animate() {
 
 // Handle window resize
 window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    const pixelRatio = Math.min(window.devicePixelRatio, 2); // cap
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const aspect = width / height;
+    // camera
+    camera.aspect = aspect; 
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderTarget.setSize(window.innerWidth, window.innerHeight);
-    bloomPass.setSize(window.innerWidth, window.innerHeight);
+    // webgl renderer
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(pixelRatio);
+    // render target
+    renderTarget.setSize(width * pixelRatio, height * pixelRatio);
+    // effect composer
+    composer.setSize(width, height);
+    composer.setPixelRatio(pixelRatio);
+    // effect passes
+    bloomPass.setSize(width * pixelRatio, height * pixelRatio);
+    // shader
+    const newPointSize = terrainDefaultParams.pointSizeRatio * TERRAIN_WIDTH * pixelRatio;
+    terrainShaderMaterial.uniforms.pointSize.value = newPointSize;
+    // do an extra render
+    composer.render();
+    console.debug(`width:${width} height:${height} pointSize:${newPointSize} pixelRatio:${pixelRatio}`);
 });
 
 // Start the animation loop
