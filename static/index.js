@@ -12,7 +12,11 @@ import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
 
-console.log("Welcome to my website! I'm Jared Boggs. I must admit I'm a THREE.js and rendering noob, but inspect away.");
+console.log(
+    "Welcome to my website! I'm Jared Boggs.\nI'm a THREE.js and rendering noob, but feel free to inspect away.\n" +
+    "Also check out the github project to view the source easier.\n" +
+    "----> https://github.com/jaredb1011/personal-site <----"
+);
 
 // ---------- PARAMETERS ----------
 // TERRAIN
@@ -390,6 +394,11 @@ interactiveContactInfo.position.set(
     TERRAIN_WIDTH/165,
     TERRAIN_WIDTH/4.0,
 );
+// interactiveContactInfo.cameraLockPos = [
+//     TERRAIN_WIDTH/4.0,
+//     TERRAIN_WIDTH/160,
+//     TERRAIN_WIDTH/4.2,
+// ];
 interactiveContactInfo.pickable = false;
 terrainMesh.add(interactiveContactInfo);
 
@@ -526,6 +535,26 @@ gui.close();
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
+// debug camera position
+const cameraDebugDiv = document.createElement("div");
+cameraDebugDiv.style = "position: fixed; top: 0px; left: 200px; z-index: 5";
+cameraDebugDiv.style.color = "white";
+cameraDebugDiv.style.width = "250px";
+cameraDebugDiv.style.height = "40px";
+cameraDebugDiv.style.background = "gray";
+document.body.append(cameraDebugDiv);
+
+function updateCameraDebug() {
+    const camX = camera.position.x.toPrecision(5);
+    const camY = camera.position.y.toPrecision(5);
+    const camZ = camera.position.z.toPrecision(5);
+    let camVector = new THREE.Vector3;
+    camera.getWorldDirection(camVector);
+    const rotX = camVector.x.toPrecision(3);
+    const rotY = camVector.y.toPrecision(3);
+    const rotZ = camVector.z.toPrecision(3);
+    cameraDebugDiv.innerText = `POS - X:${camX} | Y:${camY} | Z:${camZ}\nROT - X:${rotX} | Y:${rotY} | Z:${rotZ}`;
+};
 
 
 // ---------- Object Picking ----------
@@ -590,6 +619,9 @@ function animate() {
         }
         pickedObj = intersectedObj;
     }
+
+    // Update HTML elements
+    updateCameraDebug();
 
     controls.update(); // required for controls.enableDamping = true
     composer.render();
