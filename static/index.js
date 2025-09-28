@@ -355,9 +355,9 @@ controls.update();
 
 // Position camera above terrain for initial bird's eye view
 camera.position.set(
-    TERRAIN_WIDTH/3,
-    TERRAIN_WIDTH/3,
-    TERRAIN_WIDTH/3
+    0,
+    TERRAIN_WIDTH/2,
+    -TERRAIN_WIDTH/2
 );
 
 
@@ -388,27 +388,45 @@ scene.add(terrainMesh);
 terrainMesh.pickable = false;
 
 // Load interactive objects
-const interactiveContactInfo = new THREE.Object3D();
-interactiveContactInfo.position.set(
-    TERRAIN_WIDTH/4.2,
-    TERRAIN_WIDTH/165,
-    TERRAIN_WIDTH/4.0,
+const interactiveContactInfoGeom = new THREE.SphereGeometry(
+    TERRAIN_WIDTH/20, // radius
+    15, 15            // width and height segments
 );
-// interactiveContactInfo.cameraLockPos = [
-//     TERRAIN_WIDTH/4.0,
-//     TERRAIN_WIDTH/160,
-//     TERRAIN_WIDTH/4.2,
-// ];
-interactiveContactInfo.pickable = false;
+// const interactiveContactInfo = new THREE.LineSegments(interactiveContactInfoGeom);
+const interactiveContactInfoMat = new THREE.MeshBasicMaterial({
+    wireframe: true,
+    transparent: true,
+    opacity: 0.0
+});
+const interactiveContactInfo = new THREE.Mesh(interactiveContactInfoGeom, interactiveContactInfoMat);
+interactiveContactInfo.name = "Contact Info Interactable";
+interactiveContactInfo.position.set(
+    TERRAIN_WIDTH/2.8,
+    TERRAIN_WIDTH/45,
+    TERRAIN_WIDTH/3.7,
+);
+interactiveContactInfo.rotateY(Math.PI/4);
+interactiveContactInfo.cameraLockPos = new THREE.Vector3(
+    780,
+    145,
+    500,
+);
+interactiveContactInfo.cameraLockQuat = new THREE.Quaternion(
+    -0.205,
+    0.681,
+    0.207,
+    0.672
+);
+interactiveContactInfo.pickable = true;
 terrainMesh.add(interactiveContactInfo);
 
 const hoverDiskMesh = await createHoverDisk();
-hoverDiskMesh.pickable = true;
+hoverDiskMesh.pickable = false;
 interactiveContactInfo.add(hoverDiskMesh);
+interactiveContactInfo.hover = hoverDiskMesh;
 
 const radarMesh = await createOutlinedObjMesh(radarModelData);
 radarMesh.pickable = false;
-// radarMesh.rotateZ(Math.PI/4)
 interactiveContactInfo.add(radarMesh);
 
 
@@ -539,7 +557,7 @@ document.body.appendChild(stats.dom);
 const cameraDebugDiv = document.createElement("div");
 cameraDebugDiv.style = "position: fixed; top: 0px; left: 200px; z-index: 5";
 cameraDebugDiv.style.color = "white";
-cameraDebugDiv.style.width = "250px";
+cameraDebugDiv.style.width = "310px";
 cameraDebugDiv.style.height = "40px";
 cameraDebugDiv.style.background = "gray";
 document.body.append(cameraDebugDiv);
@@ -548,12 +566,11 @@ function updateCameraDebug() {
     const camX = camera.position.x.toPrecision(5);
     const camY = camera.position.y.toPrecision(5);
     const camZ = camera.position.z.toPrecision(5);
-    let camVector = new THREE.Vector3;
-    camera.getWorldDirection(camVector);
-    const rotX = camVector.x.toPrecision(3);
-    const rotY = camVector.y.toPrecision(3);
-    const rotZ = camVector.z.toPrecision(3);
-    cameraDebugDiv.innerText = `POS - X:${camX} | Y:${camY} | Z:${camZ}\nROT - X:${rotX} | Y:${rotY} | Z:${rotZ}`;
+    const rotX = camera.quaternion.x.toPrecision(3);
+    const rotY = camera.quaternion.y.toPrecision(3);
+    const rotZ = camera.quaternion.z.toPrecision(3);
+    const rotW = camera.quaternion.w.toPrecision(3);
+    cameraDebugDiv.innerText = `POS ~ X:${camX} | Y:${camY} | Z:${camZ}\nROT ~ X:${rotX} | Y:${rotY} | Z:${rotZ} | W:${rotW}`;
 };
 
 
@@ -588,8 +605,32 @@ function clearPickPosition() {
 
 
 function handleClicks(event) {
-    console.debug(`Click Event on target: ${event.target}`);
+    console.debug(`Click Event Target: ${event.target.id}`);
+    if (event.target.id == 'three-canvas' && pickedObj !== null){
+        // Start a camera move for an interactible object
+        console.log(`Selected: ${pickedObj.name}`);
+        console.debug(`Snapping to position:`, pickedObj.cameraLockPos, `quaternion:`, pickedObj.cameraLockQuat);
+        controls.enabled = false;
+        startCamMove(
+            camera.position,         // start pos
+            camera.quaternion,       // start rotation
+            pickedObj.cameraLockPos, // end pos
+            pickedObj.cameraLockQuat // end rotation
+        );
+    }
 };
+
+function handleKeyPress(event) {
+    const keyName = event.key;
+    console.debug(`${keyName} pressed.`)
+    if (keyName === "Escape" && !controls.enabled) {
+        console.debug("returning to free cam");
+        returnToFreeCam();
+    }
+    else {
+        console.debug("key not handled");
+    }
+}
 
 // event listeners
 window.addEventListener('click', handleClicks);
@@ -597,39 +638,122 @@ window.addEventListener('mousemove', setPickPosition);
 window.addEventListener('mouseout', clearPickPosition);
 window.addEventListener('mouseleave', clearPickPosition);
 window.addEventListener('resize', resizeRenderPipeline);
+window.addEventListener('keydown', handleKeyPress);
 
+
+
+// ---------- CAMERA MOVE ----------
+let isCameraSmoothMove = false;
+const camSmoothMoveDuration = 1.0;
+let camSmoothMoveStartTime = null;
+let camSmoothMoveProgress = 0.0;
+let camStartPos = null;
+let camStartQuat = null;
+let camEndPos = null;
+let camEndQuat = null;
+let shouldReenableControls = false;
+
+function startCamMove(startPos, startQuat, endPos, endQuat) {
+    isCameraSmoothMove = true;
+    camStartPos = startPos.clone();
+    camStartQuat = startQuat.clone();
+    camEndPos = endPos.clone();
+    camEndQuat = endQuat.clone();
+    camSmoothMoveStartTime = performance.now() / 1000;
+    camSmoothMoveProgress = 0.0;
+}
+
+function endCamMove() {
+    // final camera state
+    camera.position.copy(camEndPos);
+    camera.quaternion.copy(camEndQuat);
+    // reset cam params
+    isCameraSmoothMove = false;
+    camSmoothMoveStartTime = null;
+    camSmoothMoveProgress = 0.0;
+    // leave camStartPos populated so we can return there later after locked-off shot
+    camEndPos = null;
+    camEndQuat = null;
+    // re-enable controls (optional)
+    if (shouldReenableControls){
+        controls.enabled = true;
+        shouldReenableControls = false;
+    }
+}
+
+function updateCameraSmoothMove() {
+    camera.position.lerpVectors(camStartPos, camEndPos, camSmoothMoveProgress);
+    camera.quaternion.slerpQuaternions(camStartQuat, camEndQuat, camSmoothMoveProgress);
+}
+
+function returnToFreeCam() {
+    if (camStartPos === null || camStartQuat === null){
+        console.error('Cannot return to free cam, starting pos or quaternion was empty!', camStartPos, camStartQuat);
+        return;
+    }
+    // use previous start position as next end position.
+    const endPos = camStartPos;
+    const endQuat = camStartQuat;
+    // reenable controls after returning to free cam
+    shouldReenableControls = true;
+    // start the move
+    startCamMove(
+        camera.position,
+        camera.quaternion,
+        endPos,
+        endQuat
+    );
+}
 
 // ---------- LOOP ----------
 // Main animation loop
 function animate() {
     requestAnimationFrame(animate);
     
+    // get current time for use in animations
+    let curTime = performance.now() / 1000; // conv to seconds
+
     // Update time uniform for terrain bobbing animation
-    terrainShaderMaterial.uniforms.time.value = performance.now() / 1000;  // Convert to seconds
+    terrainShaderMaterial.uniforms.time.value = curTime;
 
     // Check for picked objects / hover
     if (intersectedObj !== pickedObj) {
         // Reset previous if it exists
         if (pickedObj !== null) {
-            pickedObj.material.uniforms.uFadePercent.value = 0.0;
+            pickedObj.hover.material.uniforms.uFadePercent.value = 0.0;
         }
         // Set new if hovering something
         if (intersectedObj !== null) {
-            intersectedObj.material.uniforms.uFadePercent.value = 1.0;
+            intersectedObj.hover.material.uniforms.uFadePercent.value = 1.0;
         }
         pickedObj = intersectedObj;
     }
 
-    // Update HTML elements
-    updateCameraDebug();
+    // camera move
+    if (isCameraSmoothMove){
+        camSmoothMoveProgress = (curTime - camSmoothMoveStartTime) / camSmoothMoveDuration;
+        if (camSmoothMoveProgress > 1.0){
+            endCamMove();
+        }
+        else {
+            updateCameraSmoothMove();
+        }
+    }
 
-    controls.update(); // required for controls.enableDamping = true
+    // controls
+    if (controls.enabled){
+        controls.update(); // required for controls.enableDamping = true
+    }
+
+    // render
     composer.render();
 
+    // Update HTML elements
     stats.update();
+    updateCameraDebug();
 }
 
 // Make sure nothing is selected
+// Then start the main loop
 clearPickPosition();
-// Start the main loop
 animate();
