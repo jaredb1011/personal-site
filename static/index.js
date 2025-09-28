@@ -424,34 +424,67 @@ composer.addPass( renderScenePass );
 composer.addPass( bloomPass );
 composer.addPass( outputPass );
 
+function resizeRenderPipeline() {
+    // calculate new dimensions
+    const pixelRatio = Math.min(window.devicePixelRatio, 2); // cap
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const aspect = width / height;
+
+    // Camera -----
+    camera.aspect = aspect; 
+    camera.updateProjectionMatrix();
+
+    // Effect Composer -----
+    // EffectComposer.setSize() automatically will set the size/pixel ratio
+    // for its render target and any passes that have been added to it.
+    // It doesn't seem to update the actual renderer, so we still
+    // set that one manually above.
+    // EffectComposer.setPixelRatio() calls setSize() so instead of calling
+    // setSize ourself, just set the width and height directly
+    // then let setPixelRatio call setSize() to avoid a double setSize call.
+    composer._width = width;
+    composer._height = height;
+    composer.setPixelRatio(pixelRatio);
+
+    // webgl renderer & target -----
+    // For some reason, the setPixelRatio() trick doesn't work on the
+    // WebGLRenderer class so we have to eat the extra setSize call.
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(width, height);
+
+    // do an extra render since things changed.
+    composer.render();
+    console.debug(`width:${width} height:${height} pixelRatio:${pixelRatio}`);
+};
 
 
 // ---------- SETTINGS / STATS Panels ----------
 const gui = new GUI();
-gui.title('Rendering Settings');
+gui.title('Visual Settings');
 
 // terrain
-const terrainFolder = gui.addFolder( 'terrain' );
+const terrainFolder = gui.addFolder( 'Terrain' );
 terrainFolder.add( terrainDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH * window.devicePixelRatio;
-});
-terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.5, 5.0 ).onChange( function ( value ) {
+}).name("Point Size");
+terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.0, 5.0 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.heightExaggeration.value = Number( value );
-});
+}).name("Height Exaggeration");
 terrainFolder.add( terrainDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 0.5 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.pointBobAmplitude.value = Number( value );
-});
+}).name("Bobbing Motion - Height");
 terrainFolder.add( terrainDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.pointBobSpeed.value = Number( value );
-});
-const satImgCtrl = terrainFolder.add( terrainDefaultParams, 'useSatelliteImage' )
+}).name("Bobbing Motion - Speed");
+const satImgCtrl = terrainFolder.add( terrainDefaultParams, 'useSatelliteImage' ).name("Use Satellite Imagery");
 
 const colorCtrl = terrainFolder.addColor( terrainDefaultParams, 'pointColor' ).onChange( function (value ) {
     terrainShaderMaterial.uniforms.pointColor.value = new THREE.Color( value );
-});
+}).name("Color");
 const brightnessCtrl = terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.pointBrightness.value = Number( value );
-});
+}).name("Brightness");
 // hide color/brightness when using satellite image
 satImgCtrl.onChange( function ( value ) {
     const useSatBool = Boolean( value );
@@ -469,24 +502,24 @@ satImgCtrl.onChange( function ( value ) {
     }
 });
 // border
-const borderFolder = gui.addFolder( 'border' );
+const borderFolder = gui.addFolder( 'Map Border' );
 borderFolder.add( borderDefaultParams, 'borderWidth', 0.002, 0.1 ).onChange( function ( value ) {
     terrainShaderMaterial.uniforms.borderThreshold.value = (1.0 - value)*0.5;
-});
+}).name("Width");
 borderFolder.addColor( borderDefaultParams, 'borderColor').onChange( function ( value ) {
     terrainShaderMaterial.uniforms.borderColor.value = new THREE.Color( value );
-});
+}).name("Color");
 // bloom
-const bloomFolder = gui.addFolder( 'bloom' );
+const bloomFolder = gui.addFolder( 'Bloom' );
 bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
     bloomPass.threshold = Number( value );
-});
+}).name("Threshold");
 bloomFolder.add( bloomDefaultParams, 'strength', 0.0, 3.0 ).onChange( function ( value ) {
     bloomPass.strength = Number( value );
-});
+}).name("Strength");
 bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
     bloomPass.radius = Number( value );
-});
+}).name("Radius");
 gui.close();
 
 // stats
@@ -523,7 +556,7 @@ function clearPickPosition() {
     pickPos.x = -100000;
     pickPos.y = -100000;
 }
-clearPickPosition();
+
 
 function handleClicks(event) {
     console.debug(`Click Event on target: ${event.target}`);
@@ -534,11 +567,11 @@ window.addEventListener('click', handleClicks);
 window.addEventListener('mousemove', setPickPosition);
 window.addEventListener('mouseout', clearPickPosition);
 window.addEventListener('mouseleave', clearPickPosition);
-
+window.addEventListener('resize', resizeRenderPipeline);
 
 
 // ---------- LOOP ----------
-// Animation loop
+// Main animation loop
 function animate() {
     requestAnimationFrame(animate);
     
@@ -564,32 +597,7 @@ function animate() {
     stats.update();
 }
 
-// Handle window resize
-window.addEventListener('resize', () => {
-    const pixelRatio = Math.min(window.devicePixelRatio, 2); // cap
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    const aspect = width / height;
-    // camera
-    camera.aspect = aspect; 
-    camera.updateProjectionMatrix();
-    // webgl renderer
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(pixelRatio);
-    // render target
-    renderTarget.setSize(width * pixelRatio, height * pixelRatio);
-    // effect composer
-    composer.setSize(width, height);
-    composer.setPixelRatio(pixelRatio);
-    // effect passes
-    bloomPass.setSize(width * pixelRatio, height * pixelRatio);
-    // shader
-    const newPointSize = terrainDefaultParams.pointSizeRatio * TERRAIN_WIDTH * pixelRatio;
-    terrainShaderMaterial.uniforms.pointSize.value = newPointSize;
-    // do an extra render
-    composer.render();
-    console.debug(`width:${width} height:${height} pointSize:${newPointSize} pixelRatio:${pixelRatio}`);
-});
-
-// Start the animation loop
+// Make sure nothing is selected
+clearPickPosition();
+// Start the main loop
 animate();
