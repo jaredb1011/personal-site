@@ -20,7 +20,8 @@ console.log(
 
 // ---------- PARAMETERS ----------
 // TERRAIN
-// world space size of terrain mesh in three.js units. This is somewhat arbitrary.
+// World space size of terrain mesh in three.js units.
+// This is somewhat arbitrary and changing it would likely cause problems.
 const TERRAIN_WIDTH = 2000;  
 
 // The percentage of of the original terrain data points to use as vertices for the mesh.
@@ -557,7 +558,7 @@ document.body.appendChild(stats.dom);
 const cameraDebugDiv = document.createElement("div");
 cameraDebugDiv.style = "position: fixed; top: 0px; left: 200px; z-index: 5";
 cameraDebugDiv.style.color = "white";
-cameraDebugDiv.style.width = "310px";
+cameraDebugDiv.style.width = "330px";
 cameraDebugDiv.style.height = "40px";
 cameraDebugDiv.style.background = "gray";
 document.body.append(cameraDebugDiv);
@@ -580,8 +581,9 @@ objPick.setPickableObjects([
     interactiveContactInfo
 ]);
 // globals
+let inInteractableMode = false;
 let intersectedObj = null;
-let pickedObj = null;
+let hoveredObj = null;
 let pickPos = new THREE.Vector2(0.0, 0.0);
 
 function getCanvasRelativePosition(event) {
@@ -591,6 +593,7 @@ function getCanvasRelativePosition(event) {
         y: (event.clientY - rect.top) * canvas.height/rect.height,
     }
 }
+
 function setPickPosition(event) {
     const pos = getCanvasRelativePosition(event);
     pickPos.x = (pos.x / canvas.width) * 2 - 1;
@@ -598,24 +601,26 @@ function setPickPosition(event) {
     // perform raycast to get hovered object
     intersectedObj = objPick.pick(pickPos, camera);
 }
+
 function clearPickPosition() {
     pickPos.x = -100000;
     pickPos.y = -100000;
 }
 
-
 function handleClicks(event) {
     console.debug(`Click Event Target: ${event.target.id}`);
-    if (event.target.id == 'three-canvas' && pickedObj !== null){
-        // Start a camera move for an interactible object
-        console.log(`Selected: ${pickedObj.name}`);
-        console.debug(`Snapping to position:`, pickedObj.cameraLockPos, `quaternion:`, pickedObj.cameraLockQuat);
+    if (event.target.id == 'three-canvas' && hoveredObj !== null && !inInteractableMode){
+        // Start a camera move for an interactable object
+        console.log(`Selected: ${hoveredObj.name}`);
+        console.debug(`Snapping to position:`, hoveredObj.cameraLockPos, `quaternion:`, hoveredObj.cameraLockQuat);
         controls.enabled = false;
+        inInteractableMode = true;
+        hoveredObj.hover.material.uniforms.uFadePercent.value = 0.0;
         startCamMove(
             camera.position,         // start pos
             camera.quaternion,       // start rotation
-            pickedObj.cameraLockPos, // end pos
-            pickedObj.cameraLockQuat // end rotation
+            hoveredObj.cameraLockPos, // end pos
+            hoveredObj.cameraLockQuat // end rotation
         );
     }
 };
@@ -643,8 +648,8 @@ window.addEventListener('keydown', handleKeyPress);
 
 
 // ---------- CAMERA MOVE ----------
-let isCameraSmoothMove = false;
 const camSmoothMoveDuration = 1.0;
+let isCameraSmoothMove = false;
 let camSmoothMoveStartTime = null;
 let camSmoothMoveProgress = 0.0;
 let camStartPos = null;
@@ -684,8 +689,8 @@ function endCamMove() {
 // Use a bezier curve to make camera zoom in/out more natural
 const smoothMoveCurve = new THREE.CubicBezierCurve(
     new THREE.Vector2(0, 0),
-    new THREE.Vector2(0.5, 0),
-    new THREE.Vector2(0.5, 1),
+    new THREE.Vector2(0.9, 0),
+    new THREE.Vector2(0.1, 1),
     new THREE.Vector2(1, 1),
 );
 
@@ -703,9 +708,9 @@ function returnToFreeCam() {
     // use previous start position as next end position.
     const endPos = camStartPos;
     const endQuat = camStartQuat;
-    // reenable controls after returning to free cam
+    // reenable controls and raycasting after returning to free cam
     shouldReenableControls = true;
-    // start the move
+    inInteractableMode = false;
     startCamMove(
         camera.position,
         camera.quaternion,
@@ -726,16 +731,16 @@ function animate() {
     terrainShaderMaterial.uniforms.time.value = curTime;
 
     // Check for picked objects / hover
-    if (intersectedObj !== pickedObj) {
+    if (!inInteractableMode && (intersectedObj !== hoveredObj)) {
         // Reset previous if it exists
-        if (pickedObj !== null) {
-            pickedObj.hover.material.uniforms.uFadePercent.value = 0.0;
+        if (hoveredObj !== null) {
+            hoveredObj.hover.material.uniforms.uFadePercent.value = 0.0;
         }
         // Set new if hovering something
         if (intersectedObj !== null) {
             intersectedObj.hover.material.uniforms.uFadePercent.value = 1.0;
         }
-        pickedObj = intersectedObj;
+        hoveredObj = intersectedObj;
     }
 
     // camera move
