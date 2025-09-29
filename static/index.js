@@ -681,9 +681,18 @@ function endCamMove() {
     }
 }
 
+// Use a bezier curve to make camera zoom in/out more natural
+const smoothMoveCurve = new THREE.CubicBezierCurve(
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(0.5, 0),
+    new THREE.Vector2(0.5, 1),
+    new THREE.Vector2(1, 1),
+);
+
 function updateCameraSmoothMove() {
-    camera.position.lerpVectors(camStartPos, camEndPos, camSmoothMoveProgress);
-    camera.quaternion.slerpQuaternions(camStartQuat, camEndQuat, camSmoothMoveProgress);
+    const interpPos = smoothMoveCurve.getPoint(camSmoothMoveProgress).y;
+    camera.position.lerpVectors(camStartPos, camEndPos, interpPos);
+    camera.quaternion.slerpQuaternions(camStartQuat, camEndQuat, interpPos);
 }
 
 function returnToFreeCam() {
