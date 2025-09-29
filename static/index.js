@@ -11,6 +11,7 @@ import { loadOBJ, applyMaterialToObjMesh } from './utils/objLoading.js';
 import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
+import { createCameraDebugDiv, updateCameraDebug } from './utils/cameraDebug.js';
 
 console.log(
     "Welcome to my website! I'm Jared Boggs.\nI'm a THREE.js and rendering noob, but feel free to inspect away.\n" +
@@ -254,7 +255,6 @@ const radarModelData = {
 
 async function createOutlinedObjMesh(objData) {
     const objMesh = await loadOBJ(objData.path);
-    console.debug(`objMesh: ${objMesh}`);
 
     const objMaterial = new THREE.MeshBasicMaterial({
         color: new THREE.Color(objData.meshColor)
@@ -554,37 +554,20 @@ gui.close();
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
-// debug camera position
-const cameraDebugDiv = document.createElement("div");
-cameraDebugDiv.style = "position: fixed; top: 0px; left: 200px; z-index: 5";
-cameraDebugDiv.style.color = "white";
-cameraDebugDiv.style.width = "330px";
-cameraDebugDiv.style.height = "40px";
-cameraDebugDiv.style.background = "gray";
-document.body.append(cameraDebugDiv);
-
-function updateCameraDebug() {
-    const camX = camera.position.x.toPrecision(5);
-    const camY = camera.position.y.toPrecision(5);
-    const camZ = camera.position.z.toPrecision(5);
-    const rotX = camera.quaternion.x.toPrecision(3);
-    const rotY = camera.quaternion.y.toPrecision(3);
-    const rotZ = camera.quaternion.z.toPrecision(3);
-    const rotW = camera.quaternion.w.toPrecision(3);
-    cameraDebugDiv.innerText = `POS ~ X:${camX} | Y:${camY} | Z:${camZ}\nROT ~ X:${rotX} | Y:${rotY} | Z:${rotZ} | W:${rotW}`;
-};
-
+// camera debug
+const cameraDebugDiv = createCameraDebugDiv();
 
 // ---------- Object Picking ----------
-const objPick = new objectPicker();
-objPick.setPickableObjects([
-    interactiveContactInfo
-]);
 // globals
 let inInteractableMode = false;
 let intersectedObj = null;
 let hoveredObj = null;
-let pickPos = new THREE.Vector2(0.0, 0.0);
+
+const objPick = new objectPicker();
+// only the following items can be raycast against
+objPick.setPickableObjects([
+    interactiveContactInfo
+]);
 
 function getCanvasRelativePosition(event) {
     const rect = canvas.getBoundingClientRect();
@@ -596,15 +579,11 @@ function getCanvasRelativePosition(event) {
 
 function setPickPosition(event) {
     const pos = getCanvasRelativePosition(event);
-    pickPos.x = (pos.x / canvas.width) * 2 - 1;
-    pickPos.y = (pos.y / canvas.height) * -2 + 1; // flipped Y
+    objPick.pickPos.x = (pos.x / canvas.width) * 2 - 1;
+    objPick.pickPos.y = (pos.y / canvas.height) * -2 + 1; // flipped Y
+    
     // perform raycast to get hovered object
-    intersectedObj = objPick.pick(pickPos, camera);
-}
-
-function clearPickPosition() {
-    pickPos.x = -100000;
-    pickPos.y = -100000;
+    intersectedObj = objPick.pick(camera);
 }
 
 function handleClicks(event) {
@@ -640,8 +619,8 @@ function handleKeyPress(event) {
 // event listeners
 window.addEventListener('click', handleClicks);
 window.addEventListener('mousemove', setPickPosition);
-window.addEventListener('mouseout', clearPickPosition);
-window.addEventListener('mouseleave', clearPickPosition);
+window.addEventListener('mouseout', (event) => objPick.clearPickPosition); // use arrow function so "this" doesn't get overriden inside the class.
+window.addEventListener('mouseleave', (event) => objPick.clearPickPosition);
 window.addEventListener('resize', resizeRenderPipeline);
 window.addEventListener('keydown', handleKeyPress);
 
@@ -764,10 +743,10 @@ function animate() {
 
     // Update HTML elements
     stats.update();
-    updateCameraDebug();
+    updateCameraDebug(camera, cameraDebugDiv);
 }
 
 // Make sure nothing is selected
 // Then start the main loop
-clearPickPosition();
+objPick.clearPickPosition();
 animate();
