@@ -243,6 +243,7 @@ async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTextur
 }
 
 
+
 // ---------- 3D MODELS / MESHES ----------
 
 const radarModelData = {
@@ -333,7 +334,7 @@ const renderTarget = new THREE.WebGLRenderTarget(
     window.innerWidth,
     window.innerHeight,
     { type: THREE.HalfFloatType }, // need this for better bloom/lighting because defaults to integer
-    {samples: 16} // 4x,8x,16x,etc MSAA
+    {samples: 8} // 4x,8x,16x,etc MSAA
 );
 
 // Map Control
@@ -388,12 +389,21 @@ const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(
 scene.add(terrainMesh);
 terrainMesh.pickable = false;
 
+
 // Load interactive objects
+
+// construct the main mesh object for an interactable
+// this object must implement the following:
+// attributes: name (str), pickable (bool), cameraLockPos (Vector3 - world space), cameraLockQuat (Quaternion)
+// hover mesh: a mesh that will have its material shader updated, added as a child and also to .hover attribute - THIS SHOULD CHANGE
+// methods: onSelected, onDeselected - these need to exist but don't need to do anything
+
+// the sphere is used for click interactions, not actually visible
 const interactiveContactInfoGeom = new THREE.SphereGeometry(
     TERRAIN_WIDTH/20, // radius
     15, 15            // width and height segments
 );
-// const interactiveContactInfo = new THREE.LineSegments(interactiveContactInfoGeom);
+
 const interactiveContactInfoMat = new THREE.MeshBasicMaterial({
     wireframe: true,
     transparent: true,
@@ -401,12 +411,18 @@ const interactiveContactInfoMat = new THREE.MeshBasicMaterial({
 });
 const interactiveContactInfo = new THREE.Mesh(interactiveContactInfoGeom, interactiveContactInfoMat);
 interactiveContactInfo.name = "Contact Info Interactable";
+interactiveContactInfo.pickable = true;
+
+// set the world position of the mesh
 interactiveContactInfo.position.set(
     TERRAIN_WIDTH/2.8,
     TERRAIN_WIDTH/45,
     TERRAIN_WIDTH/3.7,
 );
 interactiveContactInfo.rotateY(Math.PI/4);
+
+// set the position & rotation for the locked off camera shot
+// when this interactable item is selected
 interactiveContactInfo.cameraLockPos = new THREE.Vector3(
     780,
     145,
@@ -418,17 +434,46 @@ interactiveContactInfo.cameraLockQuat = new THREE.Quaternion(
     0.207,
     0.672
 );
-interactiveContactInfo.pickable = true;
-terrainMesh.add(interactiveContactInfo);
 
+// add glowing disk effect when hovered
 const hoverDiskMesh = await createHoverDisk();
 hoverDiskMesh.pickable = false;
 interactiveContactInfo.add(hoverDiskMesh);
 interactiveContactInfo.hover = hoverDiskMesh;
 
+// create the outline mesh that overlays the original mesh
 const radarMesh = await createOutlinedObjMesh(radarModelData);
 radarMesh.pickable = false;
 interactiveContactInfo.add(radarMesh);
+
+// callback for when this item is selected and the
+// camera has finished moving
+interactiveContactInfo.onSelected = function () {
+    console.debug(`showing ${interactiveContactInfo.name}'s text window`);
+}
+
+// callback for when this item is deselected before the
+// camera start moving
+interactiveContactInfo.onDeselected = function () {
+    console.debug(`hiding ${interactiveContactInfo.name}'s text window`);
+}
+
+// add to the main terrain object
+terrainMesh.add(interactiveContactInfo);
+
+
+
+// ---------- TEXT WINDOWS ----------
+const textPlane = new THREE.PlaneGeometry(50, 100, 4, 4);
+const textMaterial = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide
+});
+const textMesh = new THREE.Mesh(textPlane, textMaterial);
+textMesh.position.set(0, 100, 0);
+scene.add(textMesh);
 
 
 
@@ -483,8 +528,8 @@ function resizeRenderPipeline() {
 
     // do an extra render since things changed.
     composer.render();
-    console.debug(`width:${width} height:${height} pixelRatio:${pixelRatio}`);
 };
+
 
 
 // ---------- SETTINGS / STATS Panels ----------
@@ -557,9 +602,11 @@ document.body.appendChild(stats.dom);
 // camera debug
 const cameraDebugDiv = createCameraDebugDiv();
 
+
+
 // ---------- Object Picking ----------
 // globals
-let inInteractableMode = false;
+let targetInteractable = null;
 let intersectedObj = null;
 let hoveredObj = null;
 
@@ -588,39 +635,56 @@ function setPickPosition(event) {
 
 function handleClicks(event) {
     console.debug(`Click Event Target: ${event.target.id}`);
-    if (event.target.id == 'three-canvas' && hoveredObj !== null && !inInteractableMode){
+    if (event.target.id == 'three-canvas' && hoveredObj !== null && targetInteractable === null){
         // Start a camera move for an interactable object
         console.log(`Selected: ${hoveredObj.name}`);
-        console.debug(`Snapping to position:`, hoveredObj.cameraLockPos, `quaternion:`, hoveredObj.cameraLockQuat);
-        controls.enabled = false;
-        inInteractableMode = true;
-        hoveredObj.hover.material.uniforms.uFadePercent.value = 0.0;
-        startCamMove(
-            camera.position,         // start pos
-            camera.quaternion,       // start rotation
-            hoveredObj.cameraLockPos, // end pos
-            hoveredObj.cameraLockQuat // end rotation
-        );
+        targetInteractable = hoveredObj;
+        goToInteractable();
     }
-};
+}
 
 function handleKeyPress(event) {
     const keyName = event.key;
     console.debug(`${keyName} pressed.`)
-    if (keyName === "Escape" && !controls.enabled) {
-        console.debug("returning to free cam");
-        returnToFreeCam();
+    if (keyName === "Escape" && targetInteractable !== null) {
+        leaveInteractable();
     }
     else {
         console.debug("key not handled");
     }
 }
 
+function goToInteractable(){
+    if (targetInteractable === null) {
+        console.error(`targetInteractable is null! Can't go to it.`);
+        return;
+    }
+    console.debug(`Snapping to position:`, targetInteractable.cameraLockPos, `quaternion:`, targetInteractable.cameraLockQuat);
+    controls.enabled = false;
+    targetInteractable.hover.material.uniforms.uFadePercent.value = 0.0;
+    startCamMove(
+        camera.position,                  // start pos
+        camera.quaternion,                // start rotation
+        targetInteractable.cameraLockPos, // end pos
+        targetInteractable.cameraLockQuat // end rotation
+    );
+}
+
+function leaveInteractable(){
+    if (targetInteractable === null) {
+        console.error(`targetInteractable is null! Can't leave it.`);
+        return;
+    }
+    targetInteractable.onDeselected();
+    
+    returnToFreeCam();
+}
+
 // event listeners
 window.addEventListener('click', handleClicks);
 window.addEventListener('mousemove', setPickPosition);
-window.addEventListener('mouseout', (event) => objPick.clearPickPosition); // use arrow function so "this" doesn't get overriden inside the class.
-window.addEventListener('mouseleave', (event) => objPick.clearPickPosition);
+window.addEventListener('mouseout', () => objPick.clearPickPosition); // use arrow function so "this" doesn't get overridden inside the class.
+window.addEventListener('mouseleave', () => objPick.clearPickPosition);
 window.addEventListener('resize', resizeRenderPipeline);
 window.addEventListener('keydown', handleKeyPress);
 
@@ -636,6 +700,14 @@ let camStartQuat = null;
 let camEndPos = null;
 let camEndQuat = null;
 let shouldReenableControls = false;
+
+// Use a bezier curve to make camera zoom in/out more natural
+const smoothMoveCurve = new THREE.CubicBezierCurve(
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(0.9, 0),
+    new THREE.Vector2(0.1, 1),
+    new THREE.Vector2(1, 1),
+);
 
 function startCamMove(startPos, startQuat, endPos, endQuat) {
     isCameraSmoothMove = true;
@@ -663,15 +735,11 @@ function endCamMove() {
         controls.enabled = true;
         shouldReenableControls = false;
     }
+    // call interactable's arrival handler if applicable 
+    if (targetInteractable !== null){
+        targetInteractable.onSelected();
+    }
 }
-
-// Use a bezier curve to make camera zoom in/out more natural
-const smoothMoveCurve = new THREE.CubicBezierCurve(
-    new THREE.Vector2(0, 0),
-    new THREE.Vector2(0.9, 0),
-    new THREE.Vector2(0.1, 1),
-    new THREE.Vector2(1, 1),
-);
 
 function updateCameraSmoothMove() {
     const interpPos = smoothMoveCurve.getPoint(camSmoothMoveProgress).y;
@@ -684,12 +752,13 @@ function returnToFreeCam() {
         console.error('Cannot return to free cam, starting pos or quaternion was empty!', camStartPos, camStartQuat);
         return;
     }
+    console.debug("returning to free cam");
     // use previous start position as next end position.
     const endPos = camStartPos;
     const endQuat = camStartQuat;
     // reenable controls and raycasting after returning to free cam
     shouldReenableControls = true;
-    inInteractableMode = false;
+    targetInteractable = null;
     startCamMove(
         camera.position,
         camera.quaternion,
@@ -710,7 +779,7 @@ function animate() {
     terrainShaderMaterial.uniforms.time.value = curTime;
 
     // Check for picked objects / hover
-    if (!inInteractableMode && (intersectedObj !== hoveredObj)) {
+    if ((targetInteractable === null) && (intersectedObj !== hoveredObj)) {
         // Reset previous if it exists
         if (hoveredObj !== null) {
             hoveredObj.hover.material.uniforms.uFadePercent.value = 0.0;
