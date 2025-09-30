@@ -334,7 +334,7 @@ const renderTarget = new THREE.WebGLRenderTarget(
     window.innerWidth,
     window.innerHeight,
     { type: THREE.HalfFloatType }, // need this for better bloom/lighting because defaults to integer
-    {samples: 8} // 4x,8x,16x,etc MSAA
+    { samples: 16 } // 4x,8x,16x,etc MSAA
 );
 
 // Map Control
@@ -399,6 +399,7 @@ terrainMesh.pickable = false;
 // methods: onSelected, onDeselected - these need to exist but don't need to do anything
 
 // the sphere is used for click interactions, not actually visible
+// TODO: replace this with a cylinder so it doesn't extend below the map
 const interactiveContactInfoGeom = new THREE.SphereGeometry(
     TERRAIN_WIDTH/20, // radius
     15, 15            // width and height segments
@@ -450,6 +451,19 @@ interactiveContactInfo.add(radarMesh);
 // camera has finished moving
 interactiveContactInfo.onSelected = function () {
     console.debug(`showing ${interactiveContactInfo.name}'s text window`);
+    let camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    console.debug('camera direction', camDir);
+    // const textPos = camera.position + camDir.multiplyScalar(15);
+    // console.debug('textPos', textPos);
+    textMesh.position.set(...camera.position);
+    textMesh.position.addScaledVector(camDir, 15);
+    console.debug('textMesh position:', textMesh.position);
+    let camQuat = new THREE.Quaternion();
+    camera.getWorldQuaternion(camQuat);
+    console.debug('camera quaternion', camQuat);
+    textMesh.quaternion.set(...camQuat);
+    console.debug('textMesh quat:', textMesh.quaternion);
 }
 
 // callback for when this item is deselected before the
@@ -463,10 +477,10 @@ terrainMesh.add(interactiveContactInfo);
 
 
 
-// ---------- TEXT WINDOWS ----------
-const textPlane = new THREE.PlaneGeometry(50, 100, 4, 4);
+// ---------- TEXT WINDOWS (WIP) ----------
+const textPlane = new THREE.PlaneGeometry(15, 20, 4, 4);
 const textMaterial = new THREE.MeshBasicMaterial({
-    color: 0x000000,
+    color: 0x1b3614,
     transparent: true,
     opacity: 0.8,
     side: THREE.DoubleSide
