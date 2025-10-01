@@ -12,6 +12,7 @@ import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
 import { createCameraDebugDiv, updateCameraDebug } from './utils/cameraDebug.js';
+import { camSmoothMoveCurve, textFadeCurve } from './utils/bezierCurves.js';
 
 console.log(
     "Welcome to my website! I'm Jared Boggs.\nI'm a THREE.js and rendering noob, but feel free to inspect away.\n" +
@@ -63,9 +64,9 @@ const mapControlDefaultParams = {
     panSpeed: 0.8,
     minDistance: 0.03,
     maxDistance: 2.0,
-    maxViewAngle: 2.8,
+    maxViewAngle: 2.4,
     minViewAngle: 0.0,
-    zoomToCursor: true,
+    zoomToCursor: false,
     controlDampingFactor: 0.05
 };
 
@@ -425,18 +426,19 @@ interactiveContactInfo.rotateY(Math.PI/4);
 // set the position & rotation for the locked off camera shot
 // when this interactable item is selected
 interactiveContactInfo.cameraLockPos = new THREE.Vector3(
-    780,
-    145,
-    500,
+    680,
+    140,
+    440,
 );
 interactiveContactInfo.cameraLockQuat = new THREE.Quaternion(
-    -0.205,
-    0.681,
-    0.207,
-    0.672
+    -0.0212,
+    0.971,
+    0.222,
+    0.0928
 );
 
 // add glowing disk effect when hovered
+// TODO: make the glow better / animated
 const hoverDiskMesh = await createHoverDisk();
 hoverDiskMesh.pickable = false;
 interactiveContactInfo.add(hoverDiskMesh);
@@ -451,25 +453,36 @@ interactiveContactInfo.add(radarMesh);
 // camera has finished moving
 interactiveContactInfo.onSelected = function () {
     console.debug(`showing ${interactiveContactInfo.name}'s text window`);
+    // get camera direction vector in world space
     let camDir = new THREE.Vector3();
     camera.getWorldDirection(camDir);
     console.debug('camera direction', camDir);
-    // const textPos = camera.position + camDir.multiplyScalar(15);
-    // console.debug('textPos', textPos);
-    textMesh.position.set(...camera.position);
-    textMesh.position.addScaledVector(camDir, 15);
+
+    // move text mesh to camera + offset
+    const offsetCamPos = camera.localToWorld(new THREE.Vector3(7.5, 0, -15));
+    textMesh.position.set(...offsetCamPos);
     console.debug('textMesh position:', textMesh.position);
+
+    // set text mesh rotation based on camera
     let camQuat = new THREE.Quaternion();
     camera.getWorldQuaternion(camQuat);
     console.debug('camera quaternion', camQuat);
     textMesh.quaternion.set(...camQuat);
     console.debug('textMesh quat:', textMesh.quaternion);
+
+    // start opacity transition
+    isTextFadeIn = true;
+    textFadeStartTime = performance.now() / 1000;
 }
 
 // callback for when this item is deselected before the
 // camera start moving
 interactiveContactInfo.onDeselected = function () {
     console.debug(`hiding ${interactiveContactInfo.name}'s text window`);
+
+    // start opacity transition
+    isTextFadeOut = true;
+    textFadeStartTime = performance.now() / 1000;
 }
 
 // add to the main terrain object
@@ -478,18 +491,35 @@ terrainMesh.add(interactiveContactInfo);
 
 
 // ---------- TEXT WINDOWS (WIP) ----------
-const textPlane = new THREE.PlaneGeometry(15, 20, 4, 4);
+const textFadeInDuration = 0.7;
+const textFadeOutDuration = 0.4;
+const textMaxOpacity = 0.90;
+
+let textFadeStartTime = null;
+let textFadeProgress = 0.0;
+let isTextFadeIn = false;
+let isTextFadeOut = false;
+
+const textPlane = new THREE.PlaneGeometry(
+    15, // width
+    20, // height 
+    4,  // width segments
+    4   // height segments
+);
 const textMaterial = new THREE.MeshBasicMaterial({
     color: 0x1b3614,
     transparent: true,
-    opacity: 0.8,
-    side: THREE.DoubleSide
+    opacity: 0.9,
+    side: THREE.FrontSide
 });
 const textMesh = new THREE.Mesh(textPlane, textMaterial);
 textMesh.position.set(0, 100, 0);
 scene.add(textMesh);
 
-
+function interpTextFadeProgress(fadeProgress) {
+    const interpPos = textFadeCurve.getPoint(fadeProgress).y;
+    return interpPos;
+}
 
 // ---------- RENDER PIPELINE ----------
 
@@ -547,69 +577,75 @@ function resizeRenderPipeline() {
 
 
 // ---------- SETTINGS / STATS Panels ----------
-const gui = new GUI();
-gui.title('Visual Settings');
+function setupGui(){
+    const gui = new GUI();
+    gui.title('Visual Settings');
 
-// terrain
-const terrainFolder = gui.addFolder( 'Terrain' );
-terrainFolder.add( terrainDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH * window.devicePixelRatio;
-}).name("Point Size");
-terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.0, 5.0 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.heightExaggeration.value = Number( value );
-}).name("Height Exaggeration");
-terrainFolder.add( terrainDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 0.5 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.pointBobAmplitude.value = Number( value );
-}).name("Bobbing Motion - Height");
-terrainFolder.add( terrainDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.pointBobSpeed.value = Number( value );
-}).name("Bobbing Motion - Speed");
-const satImgCtrl = terrainFolder.add( terrainDefaultParams, 'useSatelliteImage' ).name("Use Satellite Imagery");
+    // terrain
+    const terrainFolder = gui.addFolder( 'Terrain' );
+    terrainFolder.add( terrainDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH * window.devicePixelRatio;
+    }).name("Point Size");
+    terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.0, 5.0 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.heightExaggeration.value = Number( value );
+    }).name("Height Exaggeration");
+    terrainFolder.add( terrainDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 0.5 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.pointBobAmplitude.value = Number( value );
+    }).name("Bobbing Motion - Height");
+    terrainFolder.add( terrainDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.pointBobSpeed.value = Number( value );
+    }).name("Bobbing Motion - Speed");
+    const satImgCtrl = terrainFolder.add( terrainDefaultParams, 'useSatelliteImage' ).name("Use Satellite Imagery");
 
-const colorCtrl = terrainFolder.addColor( terrainDefaultParams, 'pointColor' ).onChange( function (value ) {
-    terrainShaderMaterial.uniforms.pointColor.value = new THREE.Color( value );
-}).name("Color");
-const brightnessCtrl = terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.pointBrightness.value = Number( value );
-}).name("Brightness");
-// hide color/brightness when using satellite image
-satImgCtrl.onChange( function ( value ) {
-    const useSatBool = Boolean( value );
-    if (useSatBool) {
-        terrainShaderMaterial.fragmentShader = terrainImageFragShader;
-        terrainShaderMaterial.needsUpdate = true;
-        colorCtrl.disable();
-        brightnessCtrl.disable();
-    }
-    else {
-        terrainShaderMaterial.fragmentShader = terrainColorFragShader;
-        terrainShaderMaterial.needsUpdate = true;
-        colorCtrl.enable();
-        brightnessCtrl.enable();
-    }
-});
-// border
-const borderFolder = gui.addFolder( 'Map Border' );
-borderFolder.add( borderDefaultParams, 'borderWidth', 0.002, 0.1 ).onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.borderThreshold.value = (1.0 - value)*0.5;
-}).name("Width");
-borderFolder.addColor( borderDefaultParams, 'borderColor').onChange( function ( value ) {
-    terrainShaderMaterial.uniforms.borderColor.value = new THREE.Color( value );
-}).name("Color");
-// bloom
-const bloomFolder = gui.addFolder( 'Bloom' );
-bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
-    bloomPass.threshold = Number( value );
-}).name("Threshold");
-bloomFolder.add( bloomDefaultParams, 'strength', 0.0, 3.0 ).onChange( function ( value ) {
-    bloomPass.strength = Number( value );
-}).name("Strength");
-bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
-    bloomPass.radius = Number( value );
-}).name("Radius");
-gui.close();
+    const colorCtrl = terrainFolder.addColor( terrainDefaultParams, 'pointColor' ).onChange( function (value ) {
+        terrainShaderMaterial.uniforms.pointColor.value = new THREE.Color( value );
+    }).name("Color");
+    const brightnessCtrl = terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.pointBrightness.value = Number( value );
+    }).name("Brightness");
+    // hide color/brightness when using satellite image
+    satImgCtrl.onChange( function ( value ) {
+        const useSatBool = Boolean( value );
+        if (useSatBool) {
+            terrainShaderMaterial.fragmentShader = terrainImageFragShader;
+            terrainShaderMaterial.needsUpdate = true;
+            colorCtrl.disable();
+            brightnessCtrl.disable();
+        }
+        else {
+            terrainShaderMaterial.fragmentShader = terrainColorFragShader;
+            terrainShaderMaterial.needsUpdate = true;
+            colorCtrl.enable();
+            brightnessCtrl.enable();
+        }
+    });
+    // border
+    const borderFolder = gui.addFolder( 'Map Border' );
+    borderFolder.add( borderDefaultParams, 'borderWidth', 0.002, 0.1 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.borderThreshold.value = (1.0 - value)*0.5;
+    }).name("Width");
+    borderFolder.addColor( borderDefaultParams, 'borderColor').onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.borderColor.value = new THREE.Color( value );
+    }).name("Color");
+    // bloom
+    const bloomFolder = gui.addFolder( 'Bloom' );
+    bloomFolder.add( bloomDefaultParams, 'threshold', 0.0, 1.0 ).onChange( function ( value ) {
+        bloomPass.threshold = Number( value );
+    }).name("Threshold");
+    bloomFolder.add( bloomDefaultParams, 'strength', 0.0, 3.0 ).onChange( function ( value ) {
+        bloomPass.strength = Number( value );
+    }).name("Strength");
+    bloomFolder.add( bloomDefaultParams, 'radius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
+        bloomPass.radius = Number( value );
+    }).name("Radius");
+    gui.close();
+    return gui;
+}
 
-// stats
+// settings gui
+const gui = setupGui();
+
+// performance stats
 const stats = new Stats();
 document.body.appendChild(stats.dom);
 
@@ -638,8 +674,9 @@ function getCanvasRelativePosition(event) {
     }
 }
 
-function setPickPosition(event) {
-    const pos = getCanvasRelativePosition(event);
+// function setPickPosition(event) {
+function setPickPosition(pos) {
+    // const pos = getCanvasRelativePosition(event);
     objPick.pickPos.x = (pos.x / canvas.width) * 2 - 1;
     objPick.pickPos.y = (pos.y / canvas.height) * -2 + 1; // flipped Y
     
@@ -694,9 +731,21 @@ function leaveInteractable(){
     returnToFreeCam();
 }
 
-// event listeners
+// event listeners & handlers
+function mouseMoveHandler(event) {
+    const pos = getCanvasRelativePosition(event);
+    // within an interactable locked camera shot
+    if (targetInteractable !== null && controls.disabled) {
+        subtleMousePerspectiveShift(pos);
+    }
+    // free cam
+    else if (targetInteractable === null && controls.enabled) {
+        setPickPosition(pos);
+    }
+}
+
 window.addEventListener('click', handleClicks);
-window.addEventListener('mousemove', setPickPosition);
+window.addEventListener('mousemove', mouseMoveHandler);
 window.addEventListener('mouseout', () => objPick.clearPickPosition); // use arrow function so "this" doesn't get overridden inside the class.
 window.addEventListener('mouseleave', () => objPick.clearPickPosition);
 window.addEventListener('resize', resizeRenderPipeline);
@@ -715,13 +764,7 @@ let camEndPos = null;
 let camEndQuat = null;
 let shouldReenableControls = false;
 
-// Use a bezier curve to make camera zoom in/out more natural
-const smoothMoveCurve = new THREE.CubicBezierCurve(
-    new THREE.Vector2(0, 0),
-    new THREE.Vector2(0.9, 0),
-    new THREE.Vector2(0.1, 1),
-    new THREE.Vector2(1, 1),
-);
+
 
 function startCamMove(startPos, startQuat, endPos, endQuat) {
     isCameraSmoothMove = true;
@@ -756,7 +799,7 @@ function endCamMove() {
 }
 
 function updateCameraSmoothMove() {
-    const interpPos = smoothMoveCurve.getPoint(camSmoothMoveProgress).y;
+    const interpPos = camSmoothMoveCurve.getPoint(camSmoothMoveProgress).y;
     camera.position.lerpVectors(camStartPos, camEndPos, interpPos);
     camera.quaternion.slerpQuaternions(camStartQuat, camEndQuat, interpPos);
 }
@@ -779,6 +822,13 @@ function returnToFreeCam() {
         endPos,
         endQuat
     );
+}
+
+function subtleMousePerspectiveShift(mousePos) {
+    const xPerc = mousePos.x / canvas.width;
+    const yPerc = mousePos.y / canvas.height;
+    console.debug(xPerc, yPerc);
+    // TODO
 }
 
 // ---------- LOOP ----------
@@ -806,7 +856,7 @@ function animate() {
     }
 
     // camera move
-    if (isCameraSmoothMove){
+    if (isCameraSmoothMove) {
         camSmoothMoveProgress = (curTime - camSmoothMoveStartTime) / camSmoothMoveDuration;
         if (camSmoothMoveProgress > 1.0){
             endCamMove();
@@ -816,9 +866,30 @@ function animate() {
         }
     }
 
+    // text panel fade
+    if (isTextFadeIn && textFadeStartTime !== null) {
+        textFadeProgress = (curTime - textFadeStartTime) / textFadeInDuration;   
+        if (textFadeProgress > 1.0){
+            isTextFadeIn = false;
+            textFadeStartTime = null;
+        }
+        textMesh.material.opacity = interpTextFadeProgress(textFadeProgress)*textMaxOpacity;
+    }
+    else if (isTextFadeOut && textFadeStartTime !== null) {
+        textFadeProgress = (curTime - textFadeStartTime) / textFadeOutDuration;   
+        if (textFadeProgress > 1.0){
+            isTextFadeOut = false;
+            textFadeStartTime = null;
+        }
+        textMesh.material.opacity = (1.0 - interpTextFadeProgress(textFadeProgress))*textMaxOpacity;
+    }
+
     // controls
-    if (controls.enabled){
+    if (controls.enabled && targetInteractable === null) {
         controls.update(); // required for controls.enableDamping = true
+    }
+    else if (controls.disabled && targetInteractable !== null) {
+        
     }
 
     // render
