@@ -3,27 +3,42 @@
 ## Run Instructions
 Launch the fastapi server with ```uv run fastapi dev main.py```
 
+View at ```localhost:8000```
+
 ## To-Do
-1. Terrain / Shader
-   - Adjust brightness in sat image mode
-   - border effects
-2. Points of Interest
-   - City/Building - Education
-   - Satellite Station - Contact Info
-   - Defensive Station - Skills & Certs
-   - Air Targets - Job Experience
-3. Interactivity
-   - Click on a POI to zoom into a static view location
-   - POI is on one half, window appears with text content
-4. Polish
-   - Postprocessing effects
-     - Depth of Field 
-     - Ground Fog
-   - animations
-   - background
-   - text effects
-   - sound design?
-   - smooth zooming
+1. Terrain
+   - tweak brightness in satellite image mode
+   - better border effects
+   - experiment with different looks in terrain frag shader
+2. Rendering
+   - Postprocessing
+     - depth of field
+     - elevation-based fog
+   - fix wacky antialiasing
+3. Points of Interest
+   - better outline effect for 3D models
+   - Load text into plane
+     - need to preserve copy/paste functionality
+   - Add all POI content
+     - City/Building - Education
+     - Satellite Station - Contact Info
+     - Defensive Station - Skills & Certs
+     - Air Targets - Job Experience
+4. Interactivity
+   - hyperlinks to content
+   - download resume document
+5. Sound Design
+   - Ambient sound
+   - Camera move sound
+   - Hologram ambience
+6. UI
+   - Menu option in addition to clicking on map to select objects
+   - About page
+7. Visual Polish
+   - animations for 3D models
+   - background skybox / environment
+   - text plane effects
+   - intro loading / init page & animation
 
 ## References & Thanks
 - https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/

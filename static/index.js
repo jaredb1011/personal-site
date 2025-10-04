@@ -11,7 +11,7 @@ import { loadOBJ, applyMaterialToObjMesh } from './utils/objLoading.js';
 import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
-import { createCameraDebugDiv, updateCameraDebug } from './utils/cameraDebug.js';
+import { createCameraDebugDiv, updateCameraDebug, subtleMousePerspectiveShift } from './utils/cameraUtils.js';
 import { camSmoothMoveCurve, textFadeCurve } from './utils/bezierCurves.js';
 
 console.log(
@@ -736,7 +736,8 @@ function mouseMoveHandler(event) {
     const pos = getCanvasRelativePosition(event);
     // within an interactable locked camera shot
     if (targetInteractable !== null && !controls.enabled) {
-        subtleMousePerspectiveShift(pos);
+        const newQuat = subtleMousePerspectiveShift(canvas, pos, camera.setpoint.quat);
+        camera.setRotationFromQuaternion(newQuat);
     }
     // free cam
     else if (targetInteractable === null && controls.enabled) {
@@ -766,7 +767,7 @@ let shouldReenableControls = false;
 camera.setpoint = {
     pos: null,
     quat: null
-}; // used for subtle offset
+}; // used for subtle offset effect
 
 
 function startCamMove(startPos, startQuat, endPos, endQuat) {
@@ -830,29 +831,7 @@ function returnToFreeCam() {
     );
 }
 
-function subtleMousePerspectiveShift(mousePos) {
-    const maxShiftHorizontalDeg = 1.0;
-    const maxShiftVerticalDeg = 0.5;
-    // get shifted x quaternion
-    const xPerc = ((mousePos.x / canvas.width) - 0.5) * 2;
-    const xOffsetRad = -1 * xPerc * maxShiftHorizontalDeg * (Math.PI/180);
-    const xQuat = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(0, 1, 0), // rotate around Y axis to offset horizontally
-        xOffsetRad
-    );
-    // get shifted y quaternion
-    const yPerc = ((mousePos.y / canvas.height) - 0.5) * 2;
-    const yOffsetRad = -1 * yPerc * maxShiftVerticalDeg * (Math.PI/180);
-    const yQuat = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(1, 0, 0), // rotate around X axis to offset vertically
-        yOffsetRad
-    );
-    // set camera's rotation
-    // multiplying quaternions applies their rotations in order
-    // so this starts from existing quaternion, then rotates by xQuat, then by yQuat
-    const newQuat = camera.setpoint.quat.clone().multiply(xQuat).multiply(yQuat);
-    camera.setRotationFromQuaternion(newQuat);
-}
+
 
 // ---------- LOOP ----------
 // Main animation loop
