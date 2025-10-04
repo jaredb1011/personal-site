@@ -735,7 +735,7 @@ function leaveInteractable(){
 function mouseMoveHandler(event) {
     const pos = getCanvasRelativePosition(event);
     // within an interactable locked camera shot
-    if (targetInteractable !== null && controls.disabled) {
+    if (targetInteractable !== null && !controls.enabled) {
         subtleMousePerspectiveShift(pos);
     }
     // free cam
@@ -763,7 +763,10 @@ let camStartQuat = null;
 let camEndPos = null;
 let camEndQuat = null;
 let shouldReenableControls = false;
-
+camera.setpoint = {
+    pos: null,
+    quat: null
+}; // used for subtle offset
 
 
 function startCamMove(startPos, startQuat, endPos, endQuat) {
@@ -772,6 +775,8 @@ function startCamMove(startPos, startQuat, endPos, endQuat) {
     camStartQuat = startQuat.clone();
     camEndPos = endPos.clone();
     camEndQuat = endQuat.clone();
+    camera.setpoint.pos = camEndPos;
+    camera.setpoint.quat = camEndQuat;
     camSmoothMoveStartTime = performance.now() / 1000;
     camSmoothMoveProgress = 0.0;
 }
@@ -813,6 +818,7 @@ function returnToFreeCam() {
     // use previous start position as next end position.
     const endPos = camStartPos;
     const endQuat = camStartQuat;
+
     // reenable controls and raycasting after returning to free cam
     shouldReenableControls = true;
     targetInteractable = null;
@@ -825,10 +831,27 @@ function returnToFreeCam() {
 }
 
 function subtleMousePerspectiveShift(mousePos) {
-    const xPerc = mousePos.x / canvas.width;
-    const yPerc = mousePos.y / canvas.height;
-    console.debug(xPerc, yPerc);
-    // TODO
+    const maxShiftHorizontalDeg = 1.0;
+    const maxShiftVerticalDeg = 0.5;
+    // get shifted x quaternion
+    const xPerc = ((mousePos.x / canvas.width) - 0.5) * 2;
+    const xOffsetRad = -1 * xPerc * maxShiftHorizontalDeg * (Math.PI/180);
+    const xQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0), // rotate around Y axis to offset horizontally
+        xOffsetRad
+    );
+    // get shifted y quaternion
+    const yPerc = ((mousePos.y / canvas.height) - 0.5) * 2;
+    const yOffsetRad = -1 * yPerc * maxShiftVerticalDeg * (Math.PI/180);
+    const yQuat = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0), // rotate around X axis to offset vertically
+        yOffsetRad
+    );
+    // set camera's rotation
+    // multiplying quaternions applies their rotations in order
+    // so this starts from existing quaternion, then rotates by xQuat, then by yQuat
+    const newQuat = camera.setpoint.quat.clone().multiply(xQuat).multiply(yQuat);
+    camera.setRotationFromQuaternion(newQuat);
 }
 
 // ---------- LOOP ----------
@@ -888,9 +911,9 @@ function animate() {
     if (controls.enabled && targetInteractable === null) {
         controls.update(); // required for controls.enableDamping = true
     }
-    else if (controls.disabled && targetInteractable !== null) {
-        
-    }
+    // else if (controls.disabled && targetInteractable !== null) {
+    //     // subtleMousePerspectiveShift();
+    // }
 
     // render
     composer.render();
