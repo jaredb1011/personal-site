@@ -17,8 +17,6 @@ View at ```localhost:8000```
    - fix wacky antialiasing
 3. Points of Interest
    - better outline effect for 3D models
-   - Load text into plane
-     - need to preserve copy/paste functionality
    - Add all POI content
      - City/Building - Education
      - Satellite Station - Contact Info
@@ -39,8 +37,14 @@ View at ```localhost:8000```
    - background skybox / environment
    - text plane effects
    - intro loading / init page & animation
+8. Bugs
+   - Clicking while in a camera zoom can get you into a weird state
 
 ## References & Thanks
-- https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/
+- ThreeJS community forums and contributors
+- This helpful article about visualizing terrain - https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/
+- Facetype.js for font conversion
+
+## License
+- Fonts are sourced from Google Fonts and licensed under the Open Font License: https://openfontlicense.org/
 - Terrain data provided by OpenTopography - NASA SRTM(2013) dataset.
-- ThreeJS

@@ -7,6 +7,8 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // imported GeoTIFF directly as a script in the HTML
+import { textContent }  from './textContent.js';
+import { createTextGeometry, createTextMaterials } from './utils/textUtils.js';
 import { loadOBJ, applyMaterialToObjMesh } from './utils/objLoading.js';
 import { objectPicker } from './utils/objectPicker.js';
 import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
@@ -14,11 +16,7 @@ import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk
 import { createCameraDebugDiv, updateCameraDebug, subtleMousePerspectiveShift } from './utils/cameraUtils.js';
 import { camSmoothMoveCurve, textFadeCurve } from './utils/bezierCurves.js';
 
-console.log(
-    "Welcome to my website! I'm Jared Boggs.\nI'm a THREE.js and rendering noob, but feel free to inspect away.\n" +
-    "Also check out the github project to view the source easier.\n" +
-    "----> https://github.com/jaredb1011/personal-site <----"
-);
+console.log(textContent.consoleHello);
 
 // ---------- PARAMETERS ----------
 // TERRAIN
@@ -321,7 +319,7 @@ const camera = new THREE.PerspectiveCamera(
     15000  // far plane
 );
 
-// Create a renderer
+// WebGL Renderer
 const canvas = document.getElementById('three-canvas');
 const renderer = new THREE.WebGLRenderer({ 
     canvas,
@@ -490,10 +488,15 @@ terrainMesh.add(interactiveContactInfo);
 
 
 
-// ---------- TEXT WINDOWS (WIP) ----------
+// ---------- TEXT WINDOWS ----------
 const textFadeInDuration = 0.7;
 const textFadeOutDuration = 0.4;
 const textMaxOpacity = 0.90;
+const textPlaneWidth = 15;
+const textPlaneHeight = 20;
+const textContentMarginX = 0.5;
+const textContentMarginY = 1.5;
+const textTitleBodySpacing = 3.0;
 
 let textFadeStartTime = null;
 let textFadeProgress = 0.0;
@@ -501,28 +504,96 @@ let isTextFadeIn = false;
 let isTextFadeOut = false;
 
 const textPlane = new THREE.PlaneGeometry(
-    15, // width
-    20, // height 
+    textPlaneWidth,
+    textPlaneHeight,
     4,  // width segments
     4   // height segments
 );
-const textMaterial = new THREE.MeshBasicMaterial({
+const textPlaneMaterial = new THREE.MeshBasicMaterial({
     color: 0x1b3614,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.0,
     side: THREE.FrontSide
 });
-const textMesh = new THREE.Mesh(textPlane, textMaterial);
+const textMesh = new THREE.Mesh(textPlane, textPlaneMaterial);
+textMesh.currentContentMeshes = [];
 textMesh.position.set(0, 100, 0);
 scene.add(textMesh);
+
+textMesh.setOpacity = (newOpacity) => {
+    textMesh.material.opacity = newOpacity*textMaxOpacity;
+    textMesh.currentContentMeshes.forEach((contentMesh) => {
+        contentMesh.material.forEach((mat) => {
+            mat.opacity = textMesh.material.opacity;
+        });
+    });
+};
 
 function interpTextFadeProgress(fadeProgress) {
     const interpPos = textFadeCurve.getPoint(fadeProgress).y;
     return interpPos;
-}
+};
+
+
+// text content
+// fontPath: "static/fonts/Iceberg_Regular.json",
+// fontPath: "static/fonts/Jockey_One_Regular.json",
+// fontPath: "static/fonts/Share_Tech_Mono_Regular.json",
+
+// make title mesh
+const contactTitleTextParams = {
+    fontPath: "static/fonts/Iceberg_Regular.json",
+    textColor: 0xffffff,
+    size: 0.9,
+    depth: 0.05,
+    curveSegments: 10
+};
+const contactTitleTextMaterials = createTextMaterials(contactTitleTextParams.textColor);
+const contactTextTitleGeom = await createTextGeometry(
+    textContent.contactWindow.title,
+    contactTitleTextParams
+);
+const contactTextTitleMesh = new THREE.Mesh(contactTextTitleGeom, contactTitleTextMaterials);
+contactTextTitleMesh.position.set(
+    -textPlaneWidth/2 + textContentMarginX,
+    textPlaneHeight/2 - textContentMarginY,
+    0
+);
+textMesh.add(contactTextTitleMesh);
+textMesh.currentContentMeshes.push(contactTextTitleMesh);
+
+// make body mesh
+const contactBodyTextParams = {
+    fontPath: "static/fonts/Jockey_One_Regular.json",
+    textColor: 0xffffff,
+    size: 0.7,
+    depth: 0.05,
+    curveSegments: 10
+};
+const contactBodyTextMaterials = createTextMaterials(contactBodyTextParams.textColor);
+const contactTextBodyGeom = await createTextGeometry(
+    textContent.contactWindow.body,
+    contactBodyTextParams
+);
+const contactTextBodyMesh = new THREE.Mesh(contactTextBodyGeom, contactBodyTextMaterials);
+contactTextBodyMesh.position.set(
+    contactTextTitleMesh.position.x,
+    contactTextTitleMesh.position.y - textTitleBodySpacing,
+    0
+);
+// // contactTextBodyMesh.position.set(
+//     -textPlaneWidth/2 + textContentMarginX,
+//     textPlaneHeight/2 - textContentMarginY,
+//     0
+// );
+textMesh.add(contactTextBodyMesh);
+textMesh.currentContentMeshes.push(contactTextBodyMesh);
+
+
+
+
 
 // ---------- RENDER PIPELINE ----------
-
 // render
 const renderScenePass = new RenderPass( scene, camera );
 
@@ -576,7 +647,7 @@ function resizeRenderPipeline() {
 
 
 
-// ---------- SETTINGS / STATS Panels ----------
+// ---------- PANEL OVERLAYS ----------
 function setupGui(){
     const gui = new GUI();
     gui.title('Visual Settings');
@@ -654,7 +725,7 @@ const cameraDebugDiv = createCameraDebugDiv();
 
 
 
-// ---------- Object Picking ----------
+// ---------- OBJECT INTERACTION ----------
 // globals
 let targetInteractable = null;
 let intersectedObj = null;
@@ -754,7 +825,7 @@ window.addEventListener('keydown', handleKeyPress);
 
 
 
-// ---------- CAMERA MOVE ----------
+// ---------- CAMERA MOVEMENT ----------
 const camSmoothMoveDuration = 1.0;
 let isCameraSmoothMove = false;
 let camSmoothMoveStartTime = null;
@@ -833,7 +904,7 @@ function returnToFreeCam() {
 
 
 
-// ---------- LOOP ----------
+// ---------- ANIMATION LOOP ----------
 // Main animation loop
 function animate() {
     requestAnimationFrame(animate);
@@ -872,18 +943,25 @@ function animate() {
     if (isTextFadeIn && textFadeStartTime !== null) {
         textFadeProgress = (curTime - textFadeStartTime) / textFadeInDuration;   
         if (textFadeProgress > 1.0){
+            // end fade in
             isTextFadeIn = false;
             textFadeStartTime = null;
+            console.debug()
         }
-        textMesh.material.opacity = interpTextFadeProgress(textFadeProgress)*textMaxOpacity;
+        // fade in
+        // textMesh.material.opacity = interpTextFadeProgress(textFadeProgress)*textMaxOpacity;
+        textMesh.setOpacity(interpTextFadeProgress(textFadeProgress));
     }
     else if (isTextFadeOut && textFadeStartTime !== null) {
         textFadeProgress = (curTime - textFadeStartTime) / textFadeOutDuration;   
         if (textFadeProgress > 1.0){
+            // end fade out
             isTextFadeOut = false;
             textFadeStartTime = null;
         }
-        textMesh.material.opacity = (1.0 - interpTextFadeProgress(textFadeProgress))*textMaxOpacity;
+        // fade out
+        // textMesh.material.opacity = (1.0 - interpTextFadeProgress(textFadeProgress))*textMaxOpacity;
+        textMesh.setOpacity(1.0 - interpTextFadeProgress(textFadeProgress));
     }
 
     // controls
@@ -902,6 +980,9 @@ function animate() {
     updateCameraDebug(camera, cameraDebugDiv);
 }
 
+
+
+// ---------- MAIN ----------
 // Make sure nothing is selected
 // Then start the main loop
 objPick.clearPickPosition();
