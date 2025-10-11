@@ -37,6 +37,7 @@ View at ```localhost:8000```
    - background skybox / environment
    - text plane effects
    - intro loading / init page & animation
+   - (SUPER AMBITIOUS) use camera head tracking for subtle shift
 8. Bugs
    - Clicking while in a camera zoom can get you into a weird state
 

@@ -581,15 +581,9 @@ contactTextBodyMesh.position.set(
     contactTextTitleMesh.position.y - textTitleBodySpacing,
     0
 );
-// // contactTextBodyMesh.position.set(
-//     -textPlaneWidth/2 + textContentMarginX,
-//     textPlaneHeight/2 - textContentMarginY,
-//     0
-// );
+
 textMesh.add(contactTextBodyMesh);
 textMesh.currentContentMeshes.push(contactTextBodyMesh);
-
-
 
 
 
@@ -714,7 +708,7 @@ function setupGui(){
 }
 
 // settings gui
-const gui = setupGui();
+setupGui();
 
 // performance stats
 const stats = new Stats();
@@ -745,7 +739,6 @@ function getCanvasRelativePosition(event) {
     }
 }
 
-// function setPickPosition(event) {
 function setPickPosition(pos) {
     // const pos = getCanvasRelativePosition(event);
     objPick.pickPos.x = (pos.x / canvas.width) * 2 - 1;
@@ -949,7 +942,6 @@ function animate() {
             console.debug()
         }
         // fade in
-        // textMesh.material.opacity = interpTextFadeProgress(textFadeProgress)*textMaxOpacity;
         textMesh.setOpacity(interpTextFadeProgress(textFadeProgress));
     }
     else if (isTextFadeOut && textFadeStartTime !== null) {
@@ -960,7 +952,6 @@ function animate() {
             textFadeStartTime = null;
         }
         // fade out
-        // textMesh.material.opacity = (1.0 - interpTextFadeProgress(textFadeProgress))*textMaxOpacity;
         textMesh.setOpacity(1.0 - interpTextFadeProgress(textFadeProgress));
     }
 
@@ -968,9 +959,6 @@ function animate() {
     if (controls.enabled && targetInteractable === null) {
         controls.update(); // required for controls.enableDamping = true
     }
-    // else if (controls.disabled && targetInteractable !== null) {
-    //     // subtleMousePerspectiveShift();
-    // }
 
     // render
     composer.render();
