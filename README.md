@@ -1,11 +1,13 @@
 # Jared Boggs Personal Site
 
 ## Run Instructions
+
 Launch the fastapi server with ```uv run fastapi dev main.py```
 
 View at ```localhost:8000```
 
 ## To-Do
+
 1. Terrain
    - tweak brightness in satellite image mode
    - better border effects
@@ -39,13 +41,19 @@ View at ```localhost:8000```
    - intro loading / init page & animation
    - (SUPER AMBITIOUS) use camera head tracking for subtle shift
 8. Bugs
-   - Clicking while in a camera zoom can get you into a weird state
+   - Clicking while text fade in is occurring causes text not to fade away later
 
 ## References & Thanks
+
 - ThreeJS community forums and contributors
-- This helpful article about visualizing terrain - https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/
+- This helpful article about visualizing terrain - <https://spatial-dev.guru/2024/11/30/creating-3d-terrain-maps-from-geotiff-files-with-three-js/>
 - Facetype.js for font conversion
 
 ## License
-- Fonts are sourced from Google Fonts and licensed under the Open Font License: https://openfontlicense.org/
+
+- Fonts are sourced from Google Fonts and licensed under the Open Font License: <https://openfontlicense.org/>
 - Terrain data provided by OpenTopography - NASA SRTM(2013) dataset.
+
+> blockquote example provided here
+
+`codeblock goes here`

@@ -5,6 +5,7 @@ import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 
 
+// example parameters
 // textParams = {
 //     fontPath: /path/to/font,
 //     size: 10,

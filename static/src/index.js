@@ -1,3 +1,4 @@
+// library imports
 import * as THREE from 'three';
 import Stats from 'three/addons/libs/stats.module.js';
 import { MapControls } from 'three/addons/controls/MapControls.js';
@@ -7,244 +8,31 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 // imported GeoTIFF directly as a script in the HTML
+
+// source code imports
+import {
+    terrainGenParams,
+    terrainShaderDefaultParams,
+    borderDefaultParams,
+    bloomDefaultParams,
+    mapControlDefaultParams
+} from './config.js';
 import { textContent }  from './textContent.js';
 import { createTextGeometry, createTextMaterials } from './utils/textUtils.js';
-import { loadOBJ, applyMaterialToObjMesh } from './utils/objLoading.js';
-import { objectPicker } from './utils/objectPicker.js';
-import { terrainVertexShader, terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
+import { loadOBJ, applyMaterialToObjMesh } from './objLoading.js';
+import { objectPicker } from './objectPicker.js';
+import { loadGeoTIFF, genTerrainMesh } from './terrain.js';
+import { terrainImageFragShader, terrainColorFragShader } from './shaders/terrain_shader.js';
 import { hoverDiskVertexShader, hoverDiskFragShader } from './shaders/hover_disk_shader.js';
 import { createCameraDebugDiv, updateCameraDebug, subtleMousePerspectiveShift } from './utils/cameraUtils.js';
 import { camSmoothMoveCurve, textFadeCurve } from './utils/bezierCurves.js';
 
+
+// welcome message
 console.log(textContent.consoleHello);
-
-// ---------- PARAMETERS ----------
-// TERRAIN
-// World space size of terrain mesh in three.js units.
-// This is somewhat arbitrary and changing it would likely cause problems.
-const TERRAIN_WIDTH = 2000;  
-
-// The percentage of of the original terrain data points to use as vertices for the mesh.
-// If subsampling (this value < 1.0) then the terrain elevation data must be at least TERRAIN_WIDTH wide.
-const TERRAIN_VERTEX_DENSITY = 0.5;      
-
-// A bunch of points in a straight line grid is subject to an ugly moire effect when zoomed out.
-// Applying a jitter to the x/y position breaks up the grid and reduces the effect.
-const TERRAIN_VERTEX_JITTER = 10; 
-
-
-
-// ---------- USER SETTINGS ----------
-const terrainDefaultParams = {
-    pointSizeRatio: 0.0007,
-    heightExaggeration: 1.0,
-    pointBobAmplitude: 3.0,
-    pointBobSpeed: 0.3,
-    useSatelliteImage: true,
-    pointColor: 0x52bbcc, // blue
-    pointBrightness: 1
-};
-
-const borderDefaultParams = {
-    borderWidth: 0.02, // percent of the terrain that should be edge border
-    borderColor: 0xbefed6 // brownish orange
-};
-
-const bloomDefaultParams = {
-    threshold: 0.05,
-    strength: 0.35,
-    radius: 0.0
-};
-
-const mapControlDefaultParams = {
-    zoomSpeed: 0.8,
-    rotateSpeed: 0.5,
-    panSpeed: 0.8,
-    minDistance: 0.03,
-    maxDistance: 2.0,
-    maxViewAngle: 2.4,
-    minViewAngle: 0.0,
-    zoomToCursor: false,
-    controlDampingFactor: 0.05
-};
-
-
-
-// ---------- TERRAIN LOADING ----------  
-async function loadGeoTIFF(file){
-    // conv raw filedata into tiff format
-    const response = await fetch(file);
-    const arrayBuffer = await response.arrayBuffer();
-    const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
-    // read rasters from data
-    const image = await tiff.getImage();
-    const rasters = await image.readRasters();
-    const elevationData = rasters[0]; 
-    const width = image.getWidth();
-    const length = image.getHeight();
-    // extract resolution (pixel size in real-world units)
-    const resolution = await image.getResolution();
-    const origin = await image.getOrigin(); // [xOrigin, yOrigin]
-    const geoKeys = await image.getGeoKeys(); // Projection info
-
-    let pixelSizeX = Math.abs(resolution[0]);
-    let pixelSizeY = Math.abs(resolution[1]);
-
-   if (geoKeys.GTModelTypeGeoKey === 2) {
-        // Geographic coordinates (degrees): convert to meters
-        const latitude = origin[1]; // yOrigin in degrees
-        const metersPerDegLat = 111000; // Approx 111km per degree latitude
-        const metersPerDegLon = metersPerDegLat * Math.cos(latitude * Math.PI / 180); // Adjust for longitude
-        pixelSizeX = Math.abs(resolution[0]) * metersPerDegLon; // Width (lon) in meters
-        pixelSizeY = Math.abs(resolution[1]) * metersPerDegLat; // Height (lat) in meters
-        console.debug(`Geographic CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m at lat=${latitude}`);
-    } else {
-        // Projected coordinates (assume meters)
-        pixelSizeX = Math.abs(resolution[0]);
-        pixelSizeY = Math.abs(resolution[1]);
-        console.debug(`Projected CRS detected: pixelSizeX=${pixelSizeX.toFixed(2)}m, pixelSizeY=${pixelSizeY.toFixed(2)}m`);
-    } 
-    // // Override with assumed 10m if projected but resolution tiny
-    // if (geoKeys.GTModelTypeGeoKey === 2 && pixelSizeX < 0.001) {
-    //     pixelSizeX = 10;  // Assume 1-arc-second (~20m at this latitude)
-    //     pixelSizeY = 10;
-    //     console.debug(`Overriding tiny resolution with assumed 10m x 10m`);
-    // }
-
-    console.debug(`Width: ${width}, Height: ${length}`);
-    console.debug(`Pixel Resolution: ${pixelSizeX}m x ${pixelSizeY}m`);
-    console.debug(`Origin: ${origin}`);
-    console.debug(`GeoKeys:`, geoKeys);
-    return { elevationData, width, length, pixelSizeX, pixelSizeY};
-}
-
-async function genTerrainMesh(terrainData, terrainDefaultParams, satelliteTexture, borderDefaultParams) {
-
-    const { 
-        elevationData:terrainElevationData,
-        width:terrainWidth,
-        length:terrainLength,
-        pixelSizeX,
-        pixelSizeY
-    } = terrainData;
-    const {
-        pointSizeRatio:defaultPointSizeRatio,
-        heightExaggeration:defaultHeightExaggeration,
-        pointBobAmplitude:defaultBobAmplitude,
-        pointBobSpeed:defaultBobSpeed,
-        useSatelliteImage:defaultUseSatelliteTexture,
-        pointColor:defaultColor,
-        pointBrightness:defaultBrightness,
-    } = terrainDefaultParams;
-    const {
-        borderWidth:defaultBorderWidth,
-        borderColor:defaultBorderColor
-    } = borderDefaultParams;
-
-    // real world dimensions
-    const realWidth = terrainWidth * pixelSizeX;
-    const realLength = terrainLength * pixelSizeY;
-    console.debug(`Real Extents: ${realWidth}m wide x ${realLength}m long`);
-    const aspectRatio = realLength / realWidth;
-    console.debug(`Aspect Ratio (L/W): ${aspectRatio}`);
-
-    // Uniform scale factor to fit real extents into world space
-    const worldSpaceToRealRatio = TERRAIN_WIDTH / realWidth;
-    console.debug(`World Space to Real Word Unit ratio: ${worldSpaceToRealRatio}`);
-
-    //create initial flat plane with correct # of vertices
-    const widthVertices = Math.max(1, Math.floor(terrainWidth * TERRAIN_VERTEX_DENSITY));
-    const lengthVertices = Math.max(1, Math.floor(terrainLength * TERRAIN_VERTEX_DENSITY));
-    console.debug(`Vertex Density: ${TERRAIN_VERTEX_DENSITY}, Width Verts: ${widthVertices}, Length Verts: ${lengthVertices}, Total Verts: ${widthVertices * lengthVertices}`);
-    
-    const terrainGeo = new THREE.PlaneGeometry(
-        TERRAIN_WIDTH,                // world space width
-        TERRAIN_WIDTH * aspectRatio,  // world space length
-        widthVertices-1,              // width segments
-        lengthVertices-1              // length segments
-    );
-    terrainGeo.rotateX(-Math.PI / 2);
-    const terrainVertices = terrainGeo.attributes.position.array;
-    
-    // Jitter and elevation scaled to horizontal compression
-    const jitterAmount = TERRAIN_VERTEX_JITTER * worldSpaceToRealRatio;
-    
-    // offset vertex data by sampling (or sub-sampling) elevation data
-    let minY = Infinity, maxY = -Infinity;
-    for (let coarseRow = 0; coarseRow < lengthVertices; coarseRow++) {
-        for (let coarseCol = 0; coarseCol < widthVertices; coarseCol++) {
-            // Compute 1D vertex index (row-major order)
-            const vIdx = coarseRow * widthVertices + coarseCol;
-            const vertexIndex = vIdx * 3;  
-
-            // Clamp vIdx to avoid out-of-bounds (safety for edge cases)
-            if (vIdx >= widthVertices * lengthVertices) break;
-
-            // apply jitter to mitigate moire effect from perfect grid alignment
-            terrainVertices[vertexIndex]   += (Math.random() - 0.5) * jitterAmount * 2; // x jitter
-            terrainVertices[vertexIndex+2] += (Math.random() - 0.5) * jitterAmount * 2; // z jitter 
-
-            // Compute corresponding fine indices and sample elevation
-            const fineCol = Math.min(terrainWidth - 1, Math.floor(coarseCol * terrainWidth / widthVertices));
-            const fineRow = Math.min(terrainLength - 1, Math.floor(coarseRow * terrainLength / lengthVertices));
-            const elevIdx = fineRow * terrainWidth + fineCol;
-            const elevation = terrainElevationData[elevIdx] || 0;
-            
-            // offset Y value by elevation data, scaled horizontally
-            // const yPos = elevation * worldSpaceToRealRatio * TERRAIN_HEIGHT_EXAGGERATION;
-            const yPos = elevation * worldSpaceToRealRatio;
-            terrainVertices[vertexIndex+1] = yPos;
-            
-            // Track min/max Y
-            if (yPos < minY) minY = yPos;
-            if (yPos > maxY) maxY = yPos;
-        }
-    }
-
-    // shift points down so minY = 0
-    for (let j=0; j<terrainVertices.length; j+=3) {
-        terrainVertices[j+1] -= minY;
-    }
-
-    terrainGeo.attributes.position.needsUpdate = true;
-
-
-    // terrain point shader
-    const terrainFragShader = terrainImageFragShader;
-    if (!defaultUseSatelliteTexture){
-        terrainFragShader = terrainColorFragShader;
-    }
-
-    const terrainShaderMaterial = new THREE.ShaderMaterial({
-        uniforms: {
-            time: { value: 0.0 },  // time uniform for animation, needs to be updated in main loop
-            pointSize: { value: defaultPointSizeRatio * TERRAIN_WIDTH * window.devicePixelRatio},
-            heightExaggeration: { value: defaultHeightExaggeration },
-            pointBobAmplitude: { value: defaultBobAmplitude},
-            pointBobSpeed: { value: defaultBobSpeed },
-            pointColor: { value: new THREE.Color(defaultColor) },
-            pointBrightness: { value: defaultBrightness },
-            borderThreshold: { value: (1-defaultBorderWidth)*0.5 },
-            borderColor: { value: new THREE.Color(defaultBorderColor) },
-            uvTexture: { value: satelliteTexture }
-        },
-        vertexShader: terrainVertexShader,
-        fragmentShader: terrainFragShader, 
-        depthTest: true,
-        depthWrite: true,
-        blending: THREE.NormalBlending
-    });
-
-    // create points instead of mesh
-    const terrainMesh = new THREE.Points(terrainGeo, terrainShaderMaterial);
-    console.debug('Terrain points mesh created.');
-    return { terrainMesh, terrainShaderMaterial };
-}
-
 
 
 // ---------- 3D MODELS / MESHES ----------
-
 const radarModelData = {
     path: 'static/models/radar_tower/Radar_Tower.obj',
     meshColor: 0x000000,
@@ -254,6 +42,13 @@ const radarModelData = {
 };
 
 async function createOutlinedObjMesh(objData) {
+    // expects object with the following members:
+    // path: path to .obj file
+    // meshColor: mesh hex color
+    // edgeColor: edge hex color
+    // edgeAngle: angle at which edges are detected
+    // scale: scale relative to original .obj data
+
     const objMesh = await loadOBJ(objData.path);
 
     const objMaterial = new THREE.MeshBasicMaterial({
@@ -282,8 +77,11 @@ async function createOutlinedObjMesh(objData) {
 }
 
 async function createHoverDisk() {
+    // what I really want here is a vertical disk billboard
+    // that provides a backdrop behind the interactable.
+    // it should render in front of terrain but behind the object.
     const circleGeom = new THREE.CircleGeometry(
-        TERRAIN_WIDTH * 0.05, // radius
+        terrainGenParams.terrainWidth * 0.05, // radius
         25, // segments
         0.0, // thetaStart
         2.00 * Math.PI // thetaLength
@@ -348,8 +146,8 @@ controls.zoomToCursor = mapControlDefaultParams.zoomToCursor;
 
 // Configure controls for bird's eye view
 controls.target.set(0, 0, 0);                                                // look at center of terrain
-controls.minDistance = TERRAIN_WIDTH * mapControlDefaultParams.minDistance;    // allow closer zoom
-controls.maxDistance = TERRAIN_WIDTH * mapControlDefaultParams.maxDistance;  // allow further zoom out
+controls.minDistance = terrainGenParams.terrainWidth * mapControlDefaultParams.minDistance;    // allow closer zoom
+controls.maxDistance = terrainGenParams.terrainWidth * mapControlDefaultParams.maxDistance;  // allow further zoom out
 controls.maxPolarAngle = Math.PI / mapControlDefaultParams.maxViewAngle;     // Limit how low you can orbit (prevent seeing under terrain)
 controls.minPolarAngle = mapControlDefaultParams.minViewAngle;              // Allow complete top-down view
 controls.update();
@@ -357,8 +155,8 @@ controls.update();
 // Position camera above terrain for initial bird's eye view
 camera.position.set(
     0,
-    TERRAIN_WIDTH/2,
-    -TERRAIN_WIDTH/2
+    terrainGenParams.terrainWidth/2.5,
+    -terrainGenParams.terrainWidth/1.5
 );
 
 
@@ -379,7 +177,7 @@ const satelliteImageTexture = new THREE.TextureLoader().load(locationInfo.satell
 });
 const { terrainMesh, terrainShaderMaterial } = await genTerrainMesh(
     await terrainTiffData,
-    terrainDefaultParams,
+    terrainShaderDefaultParams,
     satelliteImageTexture,
     borderDefaultParams
 );
@@ -400,7 +198,7 @@ terrainMesh.pickable = false;
 // the sphere is used for click interactions, not actually visible
 // TODO: replace this with a cylinder so it doesn't extend below the map
 const interactiveContactInfoGeom = new THREE.SphereGeometry(
-    TERRAIN_WIDTH/20, // radius
+    terrainGenParams.terrainWidth/20, // radius
     15, 15            // width and height segments
 );
 
@@ -415,9 +213,9 @@ interactiveContactInfo.pickable = true;
 
 // set the world position of the mesh
 interactiveContactInfo.position.set(
-    TERRAIN_WIDTH/2.8,
-    TERRAIN_WIDTH/45,
-    TERRAIN_WIDTH/3.7,
+    terrainGenParams.terrainWidth/2.8,
+    terrainGenParams.terrainWidth/45,
+    terrainGenParams.terrainWidth/3.7,
 );
 interactiveContactInfo.rotateY(Math.PI/4);
 
@@ -648,24 +446,24 @@ function setupGui(){
 
     // terrain
     const terrainFolder = gui.addFolder( 'Terrain' );
-    terrainFolder.add( terrainDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
-        terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * TERRAIN_WIDTH * window.devicePixelRatio;
+    terrainFolder.add( terrainShaderDefaultParams, 'pointSizeRatio', 0.0001, 0.0025 ).onChange( function ( value ) {
+        terrainShaderMaterial.uniforms.pointSize.value = Number( value ) * terrainGenParams.terrainWidth * window.devicePixelRatio;
     }).name("Point Size");
-    terrainFolder.add( terrainDefaultParams, 'heightExaggeration', 0.0, 5.0 ).onChange( function ( value ) {
+    terrainFolder.add( terrainShaderDefaultParams, 'heightExaggeration', 0.0, 5.0 ).onChange( function ( value ) {
         terrainShaderMaterial.uniforms.heightExaggeration.value = Number( value );
     }).name("Height Exaggeration");
-    terrainFolder.add( terrainDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 0.5 ).onChange( function ( value ) {
+    terrainFolder.add( terrainShaderDefaultParams, 'pointBobAmplitude', 0.0, 10.0 ).step( 0.5 ).onChange( function ( value ) {
         terrainShaderMaterial.uniforms.pointBobAmplitude.value = Number( value );
     }).name("Bobbing Motion - Height");
-    terrainFolder.add( terrainDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
+    terrainFolder.add( terrainShaderDefaultParams, 'pointBobSpeed', 0.0, 5.0 ).step( 0.2 ).onChange( function ( value ) {
         terrainShaderMaterial.uniforms.pointBobSpeed.value = Number( value );
     }).name("Bobbing Motion - Speed");
-    const satImgCtrl = terrainFolder.add( terrainDefaultParams, 'useSatelliteImage' ).name("Use Satellite Imagery");
+    const satImgCtrl = terrainFolder.add( terrainShaderDefaultParams, 'useSatelliteImage' ).name("Use Satellite Imagery");
 
-    const colorCtrl = terrainFolder.addColor( terrainDefaultParams, 'pointColor' ).onChange( function (value ) {
+    const colorCtrl = terrainFolder.addColor( terrainShaderDefaultParams, 'pointColor' ).onChange( function (value ) {
         terrainShaderMaterial.uniforms.pointColor.value = new THREE.Color( value );
     }).name("Color");
-    const brightnessCtrl = terrainFolder.add( terrainDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
+    const brightnessCtrl = terrainFolder.add( terrainShaderDefaultParams, 'pointBrightness', 0.0, 2.0 ).step( 0.2 ).onChange( function ( value ) {
         terrainShaderMaterial.uniforms.pointBrightness.value = Number( value );
     }).name("Brightness");
     // hide color/brightness when using satellite image
